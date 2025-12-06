@@ -1,0 +1,5 @@
+{
+  "name": "PixelTactics",
+  "description": "A GBA-style turn-based strategy game engine featuring retro pixel aesthetics, grid-based movement, and AI tactical commentary.",
+  "requestFramePermissions": []
+}
