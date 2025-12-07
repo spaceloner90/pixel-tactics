@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { GameMap } from './components/GameMap';
 import { GameHUD } from './components/GameHUD';
 import { MainMenu } from './components/MainMenu';
+import { MapEditor } from './components/MapEditor';
 import { useGameEngine } from './hooks/useGameEngine';
 import { GameStatus, Position, Unit, Faction } from './types';
 import { RetroBox } from './components/RetroUI';
@@ -97,8 +98,12 @@ const App: React.FC = () => {
     }
   };
 
+  if (state.gameStatus === GameStatus.EDITOR) {
+    return <MapEditor onExit={actions.returnToMenu} />;
+  }
+
   if (state.gameStatus === GameStatus.MENU) {
-    return <MainMenu onStartLevel={actions.startLevel} />;
+    return <MainMenu onStartLevel={actions.startLevel} onEnterEditor={actions.enterEditor} />;
   }
 
   return (

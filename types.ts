@@ -54,7 +54,8 @@ export enum GameStatus {
   MENU = 'MENU',
   PLAYING = 'PLAYING',
   VICTORY = 'VICTORY',
-  DEFEAT = 'DEFEAT'
+  DEFEAT = 'DEFEAT',
+  EDITOR = 'EDITOR'
 }
 
 export interface LevelConfig {

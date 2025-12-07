@@ -46,6 +46,7 @@ export const useGameEngine = () => {
         dyingUnitIds: string[];
         attackerId: string | null;
         attackTarget: Position | null;
+        effectType?: string;
     }>({
         shakingUnitId: null,
         dyingUnitIds: [],
@@ -87,6 +88,20 @@ export const useGameEngine = () => {
         if (enemies.length === 0) {
             setGameStatus(GameStatus.VICTORY);
             setSystemMessage("Victory achieved!");
+
+            // Persist Completion
+            if (currentLevel?.id) {
+                try {
+                    const saved = localStorage.getItem('pixelTactics_completed');
+                    const completed = saved ? JSON.parse(saved) : [];
+                    if (!completed.includes(currentLevel.id)) {
+                        completed.push(currentLevel.id);
+                        localStorage.setItem('pixelTactics_completed', JSON.stringify(completed));
+                    }
+                } catch (e) {
+                    console.error("Save failed", e);
+                }
+            }
         } else if (players.length === 0) {
             setGameStatus(GameStatus.DEFEAT);
             setSystemMessage("All units lost.");
@@ -97,17 +112,19 @@ export const useGameEngine = () => {
     };
 
     // --- Animation Actions ---
-    const performAttackAnimation = async (attackerId: string, targetPos: Position, targetId: string) => {
+    const performAttackAnimation = async (attackerId: string, targetPos: Position, targetId: string, effectType?: string) => {
         // Start Lunge Visual
-        setVisuals(prev => ({ ...prev, attackerId, attackTarget: targetPos }));
-        await wait(250); // Swing Fore
+        setVisuals(prev => ({ ...prev, attackerId, attackTarget: targetPos, effectType }));
+
+        const duration = effectType ? 600 : 250; // Longer for spells
+        await wait(duration);
 
         // Impact / Shake
         setVisuals(prev => ({ ...prev, shakingUnitId: targetId }));
         await wait(100);
 
         // Reset Lunge
-        setVisuals(prev => ({ ...prev, attackerId: null, attackTarget: null }));
+        setVisuals(prev => ({ ...prev, attackerId: null, attackTarget: null, effectType: undefined }));
         await wait(150); // Finish Shake
 
         setVisuals(prev => ({ ...prev, shakingUnitId: null }));
@@ -265,19 +282,10 @@ export const useGameEngine = () => {
         setUnits(updatedUnits);
         setReachableTiles([]);
 
-        // Determine next state
-        // If Wizard (has spells) -> Action Menu
-        if (unit.spells && unit.spells.length > 0) {
-            setInteractionMode('ACTION_SELECT');
-            setSystemMessage("Choose action.");
-            setAttackRange([]);
-            setActionTargets([]);
-        } else {
-            // Default Knight/Archer -> Straight to Attack Mode
-            // Update the unit ref for the helper
-            const movedUnit = updatedUnits.find(u => u.id === unit.id)!;
-            enterAttackMode(movedUnit, updatedUnits);
-        }
+        // Default: Straight to Attack Mode (with options in HUD)
+        const movedUnit = updatedUnits.find(u => u.id === unit.id)!;
+        enterAttackMode(movedUnit, updatedUnits);
+        setSystemMessage("Attack or choose option.");
     };
 
     // Updated attackUnit to be async and handle animations internally (exposed via return/visuals)
@@ -357,7 +365,7 @@ export const useGameEngine = () => {
         }
 
         // Animation (Reuse attack/lunge for cast)
-        await performAttackAnimation(attacker.id, targetPos, "NONE"); // No shake yet
+        await performAttackAnimation(attacker.id, targetPos, "NONE", "FIREBALL"); // No shake yet
 
         // Calculate AOE
         const affectedTiles = getTilesInRadius(targetPos, selectedSpell.radius, map[0].length, map.length);
@@ -383,9 +391,17 @@ export const useGameEngine = () => {
         setUnits(nextUnits);
         setSystemMessage(`Cast ${selectedSpell.name}! Hit ${hitCount} units.`);
 
-        // Death Animations (Parallel or Seq?) - Seq is safer
-        for (const deadId of deadUnitIds) {
-            await performDeathAnimation(deadId);
+        // Death Animations (Batch Parallel)
+        if (deadUnitIds.length > 0) {
+            setVisuals(prev => ({ ...prev, dyingUnitIds: [...prev.dyingUnitIds, ...deadUnitIds] }));
+            await wait(450);
+
+            // Batch Remove from latest state
+            const survivingUnits = unitsRef.current.filter(u => !deadUnitIds.includes(u.id));
+            setUnits(survivingUnits);
+
+            setVisuals(prev => ({ ...prev, dyingUnitIds: prev.dyingUnitIds.filter(id => !deadUnitIds.includes(id)) }));
+            checkWinLoss(survivingUnits, turn);
         }
 
         endUnitAction(attacker.id, nextUnits);
@@ -501,26 +517,26 @@ export const useGameEngine = () => {
         }
 
         // 1. Cancel Selection/Menu
+        // 1. Cancel Spell Menu -> Back to Attack Mode (Default)
         if (interactionMode === 'SPELL_MENU') {
-            setInteractionMode('ACTION_SELECT');
+            const unit = units.find(u => u.id === selectedUnitId);
+            if (unit) enterAttackMode(unit, units);
             return;
         }
+
+        // 2. Cancel Spell Targeting -> Back to Spell Menu
         if (interactionMode === 'TARGETING_SPELL') {
             setInteractionMode('SPELL_MENU');
             setSelectedSpell(null);
             setAttackRange([]);
-            return; // Stay in menu
+            setSystemMessage("Select a spell.");
+            return;
         }
+
+        // 3. Cancel Move (Full Reset)
         if (interactionMode === 'TARGETING_ATTACK' && preMoveState) {
-            // If we came from ACTION_SELECT (Wizard), go back to Menu
-            const unit = units.find(u => u.id === selectedUnitId);
-            if (unit && unit.spells && unit.spells.length > 0) {
-                setInteractionMode('ACTION_SELECT');
-                setAttackRange([]);
-                setActionTargets([]);
-                return;
-            }
-            // Else fall through to full undo (Knight/Archer)
+            restoreSnapshot(preMoveState);
+            return;
         }
 
         // 2. Cancel Move (Full Reset)
@@ -535,6 +551,10 @@ export const useGameEngine = () => {
             restoreSnapshot(lastState);
             setHistory(prev => prev.slice(0, -1));
         }
+    };
+
+    const enterEditor = () => {
+        setGameStatus(GameStatus.EDITOR);
     };
 
     return {
@@ -558,6 +578,7 @@ export const useGameEngine = () => {
         actions: {
             startLevel,
             returnToMenu,
+            enterEditor,
             selectUnit,
             deselect,
             moveUnit,
@@ -583,7 +604,8 @@ export const useGameEngine = () => {
             dyingUnitIds: visuals.dyingUnitIds,
             attackerId: visuals.attackerId,
             attackOffset: { x: 0, y: 0 },
-            attackTarget: visuals.attackTarget
+            attackTarget: visuals.attackTarget,
+            effectType: visuals.effectType
         }
     };
 };

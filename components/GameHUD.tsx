@@ -120,25 +120,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 )}
             </RetroBox>
 
-            {/* Contextual Menus - Fixed Height Container */}
-            <div className="flex flex-col min-h-[200px] justify-end gap-2">
-                {interactionMode === 'ACTION_SELECT' && (
-                    <>
-                        <RetroButton onClick={onEnterAttack} className="w-full bg-red-700 border-red-900">
-                            ATTACK
-                        </RetroButton>
-                        <RetroButton onClick={onEnterSpellMenu} className="w-full bg-purple-700 border-purple-900">
-                            CAST SPELL
-                        </RetroButton>
-                        <RetroButton onClick={onWait} className="w-full bg-gray-600 border-gray-800">
-                            WAIT
-                        </RetroButton>
-                        <RetroButton onClick={onUndo} className="w-full text-xs">
-                            CANCEL
-                        </RetroButton>
-                    </>
-                )}
-
+            {/* Contextual Menus - Fixed Height Container with Right Click Undo */}
+            <div
+                className="flex flex-col min-h-[200px] justify-end gap-2"
+                onContextMenu={(e) => { e.preventDefault(); onUndo && onUndo(); }}
+            >
                 {interactionMode === 'SPELL_MENU' && activeUnit?.spells && (
                     <>
                         {activeUnit.spells.map(spell => (
@@ -152,7 +138,30 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                     </>
                 )}
 
-                {(interactionMode === 'MOVEMENT' || interactionMode === 'TARGETING_ATTACK' || interactionMode === 'TARGETING_SPELL') && (
+                {/* ACTION PHASE (Attack Default) */}
+                {interactionMode === 'TARGETING_ATTACK' && (
+                    <>
+                        {/* Magic */}
+                        {activeUnit?.spells && activeUnit.spells.length > 0 && (
+                            <RetroButton onClick={onEnterSpellMenu} className="w-full bg-purple-700 border-purple-900">
+                                MAGIC
+                            </RetroButton>
+                        )}
+
+                        {/* Wait - Standard Style */}
+                        <RetroButton onClick={onWait} className="w-full">
+                            WAIT
+                        </RetroButton>
+
+                        {/* Cancel - Warning Style */}
+                        <RetroButton onClick={onUndo} className="w-full text-sm bg-red-600 border-red-800 hover:bg-red-500">
+                            CANCEL MOVE
+                        </RetroButton>
+                    </>
+                )}
+
+                {/* MOVEMENT PHASE */}
+                {interactionMode === 'MOVEMENT' && (
                     <>
                         <RetroButton onClick={onEndTurn} disabled={gameStatus !== GameStatus.PLAYING || isBusy} className="w-full text-lg">
                             END TURN
@@ -162,6 +171,13 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                             QUIT MISSION
                         </RetroButton>
                     </>
+                )}
+
+                {/* SPELL TARGETING */}
+                {interactionMode === 'TARGETING_SPELL' && (
+                    <RetroButton onClick={onUndo} className="w-full text-xs">
+                        CANCEL CAST
+                    </RetroButton>
                 )}
             </div>
 

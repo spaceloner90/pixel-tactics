@@ -29,15 +29,17 @@ Save the raw, generated frames in `assets/source/` using the following conventio
 
 *   **Idle**: `{unit_name}_idle_1.png` / `{unit_name}_idle_2.png` (optional)
 *   **Walk**: `{unit_name}_walk_1.png` / `{unit_name}_walk_2.png`
+*   **Portraits**: `{unit_name}_casting.png` (for large overlays)
 
 Example:
 *   `assets/source/alaric_idle_1.png`
 *   `assets/source/wizard_idle_1.png` (Single frame idle)
+*   `assets/source/wizard_casting.png` (Large portrait)
 
 ## 3. Processing Scripts
-We use a **generic Python script** to stitch frames and handle transparency.
+We use generic Python scripts to handle transparency and stitching.
 
-### `scripts/stitch_sprites.py`
+### A. `scripts/stitch_sprites.py` (Standard Units)
 This script stitches any number of input frames into a single sprite sheet.
 
 **Usage:**
@@ -58,14 +60,35 @@ python scripts/stitch_sprites.py public/wizard.png assets/source/wizard_idle_1.p
 1.  **Resizes** frames to 96x96.
 2.  **Stitches** them horizontally with a **4px Transparent Gap** (if >1 frame).
 3.  **Chroma Keys** the white background to transparency (Tolerance ~10).
-4.  **Saves** to the specified output path (usually `public/`).
+
+### B. `scripts/process_portrait.py` (Large Portraits / Advanced Transparency)
+This script allows for "Smart Chroma Keying" using **Blob Detection**. Use this for large, detailed images (like the Wizard Casting Portrait) where simple background removal might accidentally erase eyes or internal white details.
+
+**Usage:**
+```bash
+python scripts/process_portrait.py [INPUT_PATH] [OUTPUT_PATH]
+```
+
+**Example:**
+```bash
+python scripts/process_portrait.py assets/source/wizard_casting.png public/wizard_casting.png
+```
+
+**What it does:**
+1.  **Blob Detection**: Scans the image for connected components ("blobs") of white pixels.
+2.  **Smart Removal**: Removes a blob ONLY if:
+    *   It touches the edge of the image (Background).
+    *   It is significantly large (>5% of total pixels).
+    *   **Manual Override**: Specific blob sizes can be hardcoded in the script to be removed if the heuristic fails.
+3.  **Preservation**: Keeps small, isolated white blobs (like eyes, teeth, or magical highlights).
 
 ## 4. Integration
 ### `GameMap.tsx` Rendering Logic
 The rendering engine handles variable frame counts and static sprites:
 
-1.  **Loading**: Load sprites using `processImage`.
-    *   **Important**: We do **NOT** auto-crop the sprites. The full 96x96 dimension (including padding) is preserved to ensure consistent alignment.
+1.  **Loading**: 
+    *   **Standard Units**: Use `processImage` (though ideally pre-process them).
+    *   **Portraits**: Load directly using `new Image()`, as `process_portrait.py` has already handled transparency.
 2.  **State Logic**:
     *   **Walking**: Active when `isMoving` is true OR (`selectedUnitId` matches AND `interactionMode` is 'MOVEMENT').
     *   **Idle**: Default state.
@@ -80,5 +103,5 @@ The rendering engine handles variable frame counts and static sprites:
 3.  **Stitch**: Run `scripts/stitch_sprites.py` with the appropriate inputs.
 4.  **Code Update**: In `GameMap.tsx`:
     *   Add a new `useRef` for the sprite.
-    *   Call `processImage` in the `useEffect` to load it.
+    *   Call `processImage` (or standard load) in the `useEffect`.
     *   Update the `render` loop to select the correct sprite based on `unit.name`.

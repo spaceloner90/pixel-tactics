@@ -1,3 +1,4 @@
+﻿/// <reference types="vite/client" />
 import React, { useState, useRef, useEffect } from 'react';
 import { TileData, Unit, Position, TerrainType, Faction, UnitType, Spell } from '../types';
 import { getTilesInRange, getReachableTiles } from '../services/gameLogic';
@@ -11,6 +12,7 @@ interface CombatVisualState {
     dyingUnitIds: string[];
     attackerId: string | null;
     attackOffset: { x: number; y: number };
+    effectType?: string;
 }
 
 interface GameMapProps {
@@ -57,7 +59,7 @@ export const GameMap: React.FC<GameMapProps> = ({
     const width = map[0]?.length || 0;
     const height = map.length || 0;
 
-    // Viewport Limits (Dynamic based on scale)
+    // Viewport Limits (Fixed Window)
     const viewportWidthPx = VIEWPORT_WIDTH * TILE_SIZE;
     const viewportHeightPx = VIEWPORT_HEIGHT * TILE_SIZE;
 
@@ -66,11 +68,19 @@ export const GameMap: React.FC<GameMapProps> = ({
     const maxScrollX = Math.max(0, (width * TILE_SIZE) - (viewportWidthPx / scale));
     const maxScrollY = Math.max(0, (height * TILE_SIZE) - (viewportHeightPx / scale));
 
+    // Calculate Centering Offset
+    const mapPixelWidth = width * TILE_SIZE * scale;
+    const mapPixelHeight = height * TILE_SIZE * scale;
+    const centeringOffsetX = mapPixelWidth < viewportWidthPx ? Math.floor((viewportWidthPx - mapPixelWidth) / 2) : 0;
+    const centeringOffsetY = mapPixelHeight < viewportHeightPx ? Math.floor((viewportHeightPx - mapPixelHeight) / 2) : 0;
+
     // Assets
     const alaricSprite = useRef<HTMLImageElement | null>(null);
     const alaricWalkSprite = useRef<HTMLImageElement | null>(null);
     const archerSprite = useRef<HTMLImageElement | null>(null);
     const wizardSprite = useRef<HTMLImageElement | null>(null);
+    const wizardCastingSprite = useRef<HTMLImageElement | null>(null);
+    const fireballSprite = useRef<HTMLImageElement | null>(null);
 
     // Load Sprites with Processing
     useEffect(() => {
@@ -94,7 +104,6 @@ export const GameMap: React.FC<GameMapProps> = ({
             const rBg = data[0];
             const gBg = data[1];
             const bBg = data[2];
-            // Tolerance
             const tol = 10;
 
             for (let i = 0; i < data.length; i += 4) {
@@ -123,7 +132,17 @@ export const GameMap: React.FC<GameMapProps> = ({
         processImage('alaric.png', alaricSprite);
         processImage('alaric_walk.png', alaricWalkSprite);
         processImage('archer.png', archerSprite);
+        processImage('archer.png', archerSprite);
         processImage('wizard.png', wizardSprite);
+        // Wizard Loading (Direct, Pre-processed)
+        const wc = new Image();
+        wc.src = `${import.meta.env.BASE_URL}wizard_casting.png`;
+        wc.onload = () => { wizardCastingSprite.current = wc; };
+
+        // Load Fireball (Direct load as it is pre-processed)
+        const fb = new Image();
+        fb.src = `${import.meta.env.BASE_URL}fireball.png`;
+        fb.onload = () => { fireballSprite.current = fb; };
     }, []);
 
     // State for Animations
@@ -133,6 +152,11 @@ export const GameMap: React.FC<GameMapProps> = ({
     // State for Hover Prediction
     const [hoverMoveTiles, setHoverMoveTiles] = useState<Position[]>([]);
     const [hoverAttackTiles, setHoverAttackTiles] = useState<Position[]>([]);
+
+    // VFX Timing
+    const effectStartTime = useRef<number>(0);
+    // prevEffectType removed as we use lazy init
+
 
     // Camera Snap for Active Enemy
     useEffect(() => {
@@ -170,17 +194,22 @@ export const GameMap: React.FC<GameMapProps> = ({
         let animationFrameId: number;
 
         const render = () => {
-            // ... existing clear and translate ...
-            // Clear
-            ctx.fillStyle = '#0a0a0a';
+            if (!ctx || !canvas) return;
+
+            // Clear Background
+            ctx.fillStyle = '#0c0a09'; // Very dark/black
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Save context for camera translation
             ctx.save();
+
+            // Apply Centering
+            ctx.translate(centeringOffsetX, centeringOffsetY);
+
+            // Apply Scale & Camera
             ctx.scale(scale, scale);
             ctx.translate(-camera.x, -camera.y);
 
-            // 1. Draw Map Terrain
+            // 1. Draw Map
             map.forEach((row, y) => {
                 row.forEach((tile, x) => {
                     const px = x * TILE_SIZE;
@@ -499,6 +528,67 @@ export const GameMap: React.FC<GameMapProps> = ({
                 ctx.globalAlpha = 1.0;
             });
 
+            // 4. VFX (Fireball)
+            if (combatState.effectType === 'FIREBALL' && (combatState as any).attackTarget && fireballSprite.current) {
+                if (effectStartTime.current === 0) {
+                    effectStartTime.current = Date.now();
+                }
+
+                const target = (combatState as any).attackTarget;
+                const tx = target.x * TILE_SIZE;
+                const ty = target.y * TILE_SIZE;
+
+                // Centered 3x3 Area
+                const centerX = tx + TILE_SIZE / 2;
+                const centerY = ty + TILE_SIZE / 2;
+
+                const size = TILE_SIZE * 3;
+                const drawX = centerX - size / 2;
+                const drawY = centerY - size / 2;
+
+                // Animate
+                const frameCount = 5;
+                const duration = 600; // Matches engine wait
+                const now = Date.now();
+                const elapsed = now - effectStartTime.current;
+
+                // Clamp to last frame if exceeded (One-shot animation)
+                let frame = Math.floor((elapsed / duration) * frameCount);
+                if (frame >= frameCount) frame = frameCount - 1;
+
+                const sx = frame * 100; // 96 + 4 gap
+
+                ctx.drawImage(
+                    fireballSprite.current,
+                    sx, 0, 96, 96,
+                    drawX, drawY, size, size
+                );
+
+                // Wizard Casting Overlay
+                if (wizardCastingSprite.current) {
+                    ctx.save();
+                    // Reset transform to draw in screen space
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+                    const pImg = wizardCastingSprite.current;
+                    // Scale to 60% of viewport height
+                    const targetHeight = canvas.height * 0.6;
+                    const pScale = targetHeight / pImg.height;
+
+                    const pW = pImg.width * pScale;
+                    const pH = pImg.height * pScale;
+
+                    // Bottom Right
+                    const pX = canvas.width - pW;
+                    const pY = canvas.height - pH;
+
+                    ctx.drawImage(pImg, pX, pY, pW, pH);
+
+                    ctx.restore();
+                }
+            } else {
+                effectStartTime.current = 0; // Reset
+            }
             ctx.restore();
 
             animationFrameId = requestAnimationFrame(render);
@@ -514,8 +604,10 @@ export const GameMap: React.FC<GameMapProps> = ({
     const getTileFromEvent = (clientX: number, clientY: number) => {
         if (!canvasRef.current) return null;
         const rect = canvasRef.current.getBoundingClientRect();
-        const mouseX = clientX - rect.left;
-        const mouseY = clientY - rect.top;
+
+        // Adjust for Centering
+        const mouseX = clientX - rect.left - centeringOffsetX;
+        const mouseY = clientY - rect.top - centeringOffsetY;
 
         // Apply visual scale and camera
         const worldX = (mouseX / scale) + camera.x;
@@ -536,8 +628,10 @@ export const GameMap: React.FC<GameMapProps> = ({
 
         if (!canvasRef.current) return;
         const rect = canvasRef.current.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
+
+        // We use clientX directly here but logic inside must align
+        const mouseX = e.clientX - rect.left - centeringOffsetX;
+        const mouseY = e.clientY - rect.top - centeringOffsetY;
 
         // World Pos before zoom
         const worldX = (mouseX / scale) + camera.x;
@@ -689,15 +783,15 @@ export const GameMap: React.FC<GameMapProps> = ({
         <div
             className="relative shadow-2xl rounded overflow-hidden border-4 border-gray-800"
             style={{
-                width: Math.min(width, VIEWPORT_WIDTH) * TILE_SIZE,
-                height: Math.min(height, VIEWPORT_HEIGHT) * TILE_SIZE
+                width: viewportWidthPx,
+                height: viewportHeightPx
             }}
             onContextMenu={handleContextMenu}
         >
             <canvas
                 ref={canvasRef}
-                width={Math.min(width, VIEWPORT_WIDTH) * TILE_SIZE}
-                height={Math.min(height, VIEWPORT_HEIGHT) * TILE_SIZE}
+                width={viewportWidthPx}
+                height={viewportHeightPx}
                 className="block cursor-pointer"
                 onMouseDown={handleMouseDown}
                 onClick={handleClick}
