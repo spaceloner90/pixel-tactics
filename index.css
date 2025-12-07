@@ -1,1 +1,35 @@
-/* Main stylesheet */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes slideInLeft {
+    0% {
+        transform: translateX(-100vw);
+        opacity: 0;
+    }
+
+    100% {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOutRight {
+    0% {
+        transform: translateX(0);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateX(100vw);
+        opacity: 0;
+    }
+}
+
+.turn-banner-enter {
+    animation: slideInLeft 0.5s ease-out forwards;
+}
+
+.turn-banner-exit {
+    animation: slideOutRight 0.5s ease-in forwards;
+}

@@ -12,6 +12,7 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'hero_1',
                 name: 'Alaric',
+                portrait: '/pixel-tactics/assets/portraits/alaric.png',
                 type: UnitType.KNIGHT,
                 faction: Faction.PLAYER,
                 position: { x: 0, y: 0 },
@@ -24,7 +25,8 @@ export const LEVELS: LevelConfig[] = [
             },
             {
                 id: 'dummy_1',
-                name: 'Training Dummy',
+                name: 'Dummy',
+                portrait: '/pixel-tactics/assets/portraits/dummy.png',
                 type: UnitType.ARCHER,
                 faction: Faction.ENEMY,
                 position: { x: 5, y: 0 },
@@ -49,6 +51,7 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'ranger_1',
                 name: 'Hawkeye',
+                portrait: '/pixel-tactics/assets/portraits/archer.png',
                 type: UnitType.ARCHER,
                 faction: Faction.PLAYER,
                 position: { x: 2, y: 0 },
@@ -62,6 +65,7 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'target_1',
                 name: 'Target',
+                portrait: '/pixel-tactics/assets/portraits/enemy_soldier.png',
                 type: UnitType.KNIGHT,
                 faction: Faction.ENEMY,
                 position: { x: 5, y: 0 },
@@ -86,6 +90,7 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'merlin_1',
                 name: 'Merlin',
+                portrait: '/pixel-tactics/assets/portraits/wizard.png',
                 type: UnitType.WIZARD,
                 faction: Faction.PLAYER,
                 position: { x: 3, y: 1 },
@@ -103,6 +108,7 @@ export const LEVELS: LevelConfig[] = [
             ...Array.from({ length: 9 }).map((_, i) => ({
                 id: `dummy_${i}`,
                 name: 'Dummy',
+                portrait: '/pixel-tactics/assets/portraits/dummy.png',
                 type: UnitType.KNIGHT,
                 faction: Faction.ENEMY,
                 position: { x: 2 + (i % 3), y: 4 + Math.floor(i / 3) }, // 2,4 to 4,6
@@ -120,29 +126,30 @@ export const LEVELS: LevelConfig[] = [
         name: "Skirmish: The Siege",
         description: "Breach the defenses. 3 Turns.",
         width: 20,
-        height: 20,
+        height: 8,
         maxTurns: 3,
         walls: [
             // Fortress Box
-            // Top Wall (y=8)
-            { x: 13, y: 8 }, { x: 14, y: 8 }, { x: 15, y: 8 }, { x: 16, y: 8 }, { x: 17, y: 8 }, { x: 18, y: 8 }, { x: 19, y: 8 },
-            // Bottom Wall (y=12)
-            { x: 13, y: 12 }, { x: 14, y: 12 }, { x: 15, y: 12 }, { x: 16, y: 12 }, { x: 17, y: 12 }, { x: 18, y: 12 }, { x: 19, y: 12 },
+            // Top Wall (y=8 -> 2)
+            { x: 13, y: 2 }, { x: 14, y: 2 }, { x: 15, y: 2 }, { x: 16, y: 2 }, { x: 17, y: 2 }, { x: 18, y: 2 }, { x: 19, y: 2 },
+            // Bottom Wall (y=12 -> 6)
+            { x: 13, y: 6 }, { x: 14, y: 6 }, { x: 15, y: 6 }, { x: 16, y: 6 }, { x: 17, y: 6 }, { x: 18, y: 6 }, { x: 19, y: 6 },
             // Back Wall (x=19)
-            { x: 19, y: 9 }, { x: 19, y: 10 }, { x: 19, y: 11 },
-            // Front Wall (x=13) - partial, with gap at y=10
-            { x: 13, y: 9 }, { x: 13, y: 11 }
+            { x: 19, y: 3 }, { x: 19, y: 4 }, { x: 19, y: 5 },
+            // Front Wall (x=13) - partial, with gap at y=4
+            { x: 13, y: 3 }, { x: 13, y: 5 }
         ],
         units: [
             // Player Squad (Mid-Left)
             {
                 id: 'hero_2',
                 name: 'Sir Alaric',
+                portrait: '/pixel-tactics/assets/portraits/alaric.png',
                 type: UnitType.KNIGHT,
                 faction: Faction.PLAYER,
-                position: { x: 4, y: 10 },
-                hp: 1,
-                maxHp: 1,
+                position: { x: 4, y: 4 }, // Was 10
+                hp: 2,
+                maxHp: 2,
                 moveRange: 5,
                 attackRangeMin: 1,
                 attackRangeMax: 1,
@@ -151,9 +158,10 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'ranger_2',
                 name: 'Hawkeye',
+                portrait: '/pixel-tactics/assets/portraits/archer.png',
                 type: UnitType.ARCHER,
                 faction: Faction.PLAYER,
-                position: { x: 4, y: 9 },
+                position: { x: 4, y: 3 }, // Was 9
                 hp: 1,
                 maxHp: 1,
                 moveRange: 4,
@@ -164,9 +172,10 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'merlin_2',
                 name: 'Merlin',
+                portrait: '/pixel-tactics/assets/portraits/wizard.png',
                 type: UnitType.WIZARD,
                 faction: Faction.PLAYER,
-                position: { x: 4, y: 11 },
+                position: { x: 4, y: 5 }, // Was 11
                 hp: 1,
                 maxHp: 1,
                 moveRange: 3,
@@ -183,9 +192,10 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'captain_1',
                 name: 'Captain',
+                portrait: '/pixel-tactics/assets/portraits/enemy_soldier.png',
                 type: UnitType.KNIGHT,
                 faction: Faction.ENEMY,
-                position: { x: 14, y: 10 },
+                position: { x: 14, y: 4 }, // Was 10
                 hp: 4,
                 maxHp: 4,
                 moveRange: 0,
@@ -196,9 +206,10 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'guard_1',
                 name: 'Guard',
+                portrait: '/pixel-tactics/assets/portraits/enemy_soldier.png',
                 type: UnitType.KNIGHT,
                 faction: Faction.ENEMY,
-                position: { x: 14, y: 9 }, // Was 15
+                position: { x: 14, y: 3 }, // Was 9
                 hp: 1,
                 maxHp: 1,
                 moveRange: 0,
@@ -209,9 +220,10 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'guard_2',
                 name: 'Guard',
+                portrait: '/pixel-tactics/assets/portraits/enemy_soldier.png',
                 type: UnitType.KNIGHT,
                 faction: Faction.ENEMY,
-                position: { x: 14, y: 11 }, // Was 15
+                position: { x: 14, y: 5 }, // Was 11
                 hp: 1,
                 maxHp: 1,
                 moveRange: 0,
@@ -223,9 +235,10 @@ export const LEVELS: LevelConfig[] = [
             {
                 id: 'sniper_1',
                 name: 'Sniper',
+                portrait: '/pixel-tactics/assets/portraits/enemy_soldier.png',
                 type: UnitType.ARCHER,
                 faction: Faction.ENEMY,
-                position: { x: 18, y: 10 }, // Was 19
+                position: { x: 18, y: 4 }, // Was 10
                 hp: 1,
                 maxHp: 1,
                 moveRange: 0,

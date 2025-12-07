@@ -5,13 +5,14 @@ import { MainMenu } from './components/MainMenu';
 import { useGameEngine } from './hooks/useGameEngine';
 import { GameStatus, Position, Unit, Faction } from './types';
 import { RetroBox } from './components/RetroUI';
+import { TurnBanner } from './components/TurnBanner';
 
 const App: React.FC = () => {
   const { state, actions, combatState } = useGameEngine();
   const [isLocalBusy, setIsLocalBusy] = useState(false);
   const [inspectedUnit, setInspectedUnit] = useState<Unit | undefined>(undefined);
 
-  // Animation Helper
+  // Animation Helper for local UI moves (e.g. selection)
   const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   // Sync inspected unit with selection
@@ -31,21 +32,6 @@ const App: React.FC = () => {
     }
   };
 
-  const animateMove = async (unitId: string, path: Position[]) => {
-    // Current implementation moves instantly logic-wise, visual interpolation handled by CSS
-    // If we want step-by-step, we'd block interaction
-    setIsLocalBusy(true);
-    await wait(300); // Mock travel time
-    setIsLocalBusy(false);
-  };
-
-  const animateAttack = async (attackerId: string, targetPos: Position) => {
-    setIsLocalBusy(true);
-    await wait(300); // Lunge
-    await wait(200); // Impact
-    setIsLocalBusy(false);
-  };
-
   const handleTileClick = async (pos: Position) => {
     // Blocks interaction if busy
     if (state.gameStatus !== GameStatus.PLAYING || state.isBusy || isLocalBusy) return;
@@ -56,7 +42,6 @@ const App: React.FC = () => {
 
       // Select Friendly Unit
       if (unitAtTile && unitAtTile.faction === Faction.PLAYER) {
-        // Allow selecting even if hasMoved (for inspection) - handled by selectUnit logic now
         actions.selectUnit(unitAtTile.id);
         return;
       }
@@ -71,40 +56,22 @@ const App: React.FC = () => {
           actions.moveUnit(pos);
           setIsLocalBusy(false);
         } else {
-          // Deselect if clicking elsewhere (empty or enemy)
           actions.deselect();
         }
       } else {
-        // Nothing selected, clicked empty/enemy -> just Deselect to be sure
         actions.deselect();
       }
     }
     // MODE: TARGETING (Attack)
     else if (state.interactionMode === 'TARGETING_ATTACK') {
-      // Check if valid target
       const isTarget = state.actionTargets.some(t => t.x === pos.x && t.y === pos.y);
 
       if (isTarget) {
-        setIsLocalBusy(true);
         if (state.selectedUnitId) {
-          const targetUnit = state.units.find(u => u.position.x === pos.x && u.position.y === pos.y);
-
-          // Animate First (Lunge) - State hasn't changed yet
-          await animateAttack(state.selectedUnitId, pos);
-
-          const result = await actions.attackUnit(state.selectedUnitId, pos);
-
-          if (result?.success) {
-            // Check for Kill
-            if (result?.isKill && targetUnit) {
-              await wait(450); // Wait for death animation (delayed 300ms + duration 300ms)
-              actions.removeUnits([targetUnit.id]);
-            }
-          }
+          // Engine handles animation and state updates
+          await actions.attackUnit(state.selectedUnitId, pos);
         }
-        setIsLocalBusy(false);
       } else {
-        // Any click on a non-target tile interprets as "Wait" / "Cancel Attack" -> End Turn
         if (state.selectedUnitId) {
           actions.waitUnit(state.selectedUnitId);
         }
@@ -114,39 +81,16 @@ const App: React.FC = () => {
     else if (state.interactionMode === 'TARGETING_SPELL') {
       const isTarget = state.actionTargets.some(t => t.x === pos.x && t.y === pos.y);
       if (isTarget) {
-        setIsLocalBusy(true);
         if (state.selectedUnitId) {
-          await animateAttack(state.selectedUnitId, pos); // Re-using attack animation
-          actions.castSpell(pos);
-
-          // Check for spell kills (delayed)
-          if (state.selectedSpell) {
-            const spell = state.selectedSpell;
-            const targets = state.units.filter(u => {
-              const radius = spell.radius;
-              const distX = Math.abs(u.position.x - pos.x);
-              const distY = Math.abs(u.position.y - pos.y);
-              return distX <= radius && distY <= radius;
-            });
-
-            // Wait for animation
-            // Wait for animation
-            const deadUnits = targets.filter(t => t.hp - spell.damage <= 0);
-            if (deadUnits.length > 0) {
-              await wait(450);
-              actions.removeUnits(deadUnits.map(t => t.id));
-            }
-          }
+          // Engine handles everything
+          await actions.castSpell(pos);
         }
-        setIsLocalBusy(false);
       } else {
-        // Cancel spell targeting
         actions.deselect();
       }
     }
-    // MODE: ACTION SELECT (e.g. Wizard Menu)
+    // MODE: ACTION SELECT
     else if (state.interactionMode === 'ACTION_SELECT') {
-      // User requested: "skip the turn by clicking on the map before choosing an action"
       if (state.selectedUnitId) {
         actions.waitUnit(state.selectedUnitId);
       }
@@ -179,7 +123,10 @@ const App: React.FC = () => {
       <div className="relative z-10 flex gap-8 items-start">
 
         {/* Game Area */}
-        <div className="relative">
+        <div
+          className="relative flex justify-center items-center bg-black/20 rounded-lg border-2 border-white/5"
+          style={{ width: 960, height: 768 }}
+        >
           {state.map.length > 0 && (
             <GameMap
               map={state.map}
@@ -191,7 +138,7 @@ const App: React.FC = () => {
               onTileClick={handleTileClick}
               onHover={handleHover}
               onRightClick={actions.undo}
-              combatState={combatState}
+              combatState={combatState} // Passed directly from engine
               interactionMode={state.interactionMode}
               selectedSpell={state.selectedSpell}
             />
@@ -208,7 +155,7 @@ const App: React.FC = () => {
           activeUnit={state.units.find(u => u.id === state.selectedUnitId)} // Actual acting unit
           systemMessage={state.systemMessage}
           interactionMode={state.interactionMode}
-          isBusy={isLocalBusy}
+          isBusy={state.isBusy || isLocalBusy} // Combined Busy State
           onEndTurn={actions.endTurn}
           onQuit={actions.returnToMenu}
           onEnterAttack={actions.enterAttackMode}
@@ -231,6 +178,9 @@ const App: React.FC = () => {
             <button onClick={actions.returnToMenu} className="text-white border px-4 py-2 mt-4 hover:bg-white/10">RETREAT</button>
           </div>
         )}
+
+        {/* Turn Banner Overlay */}
+        <TurnBanner turn={state.turn} maxTurns={state.currentLevel?.maxTurns || 0} activeFaction={state.activeFaction} />
 
       </div>
     </div>

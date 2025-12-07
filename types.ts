@@ -36,6 +36,7 @@ export interface Unit {
   spells?: Spell[];
   hasMoved: boolean;
   name: string;
+  portrait?: string;
 }
 
 export enum TerrainType {

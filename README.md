@@ -18,3 +18,19 @@ View your app in AI Studio: https://ai.studio/apps/drive/10uD1NiMg3-s0G65gyGbhAq
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Development Guidelines
+
+### Asset Generation (Sprite Pipeline)
+We use a specific pipeline for generating and processing pixel art sprites.  
+**before generating or modifying unit sprites**, please consult:
+👉 [Sprite Generation Pipeline](docs/SPRITE_PIPELINE.md)
+
+**Key Scripts:**
+*   `python scripts/flip_source.py`: Corrects left-facing source images.
+*   `python scripts/stitch_knight.py`: Stitches and cleans the Knight sprite.
+
+**Visual Specs:**
+*   **Resolution**: 96x96
+*   **Facing**: Right
+*   **Background**: White (Cleaned by script)

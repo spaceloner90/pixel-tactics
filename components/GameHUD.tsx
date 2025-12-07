@@ -41,16 +41,28 @@ export const GameHUD: React.FC<GameHUDProps> = ({
     onUndo
 }) => {
     return (
-        <div className="flex flex-col gap-4 w-full max-w-xs pointers-events-auto">
+        <div className="flex flex-col gap-4 w-80 shrink-0 pointers-events-auto">
             {/* Note: pointers-events-auto in case parent disables them */}
 
-            <RetroBox title="UNIT INTEL" className="min-h-[220px]">
+            <RetroBox title="UNIT INTEL" className="h-[320px]">
                 {selectedUnit ? (
                     <div className="flex flex-col h-full gap-3">
                         {/* Header */}
-                        <div className="flex justify-between items-center border-b border-blue-700 pb-2">
-                            <span className="text-yellow-400 font-bold text-xl truncate">{selectedUnit.name}</span>
-                            <span className="text-xs bg-blue-800 px-2 py-0.5 rounded text-blue-200 uppercase tracking-wider">{selectedUnit.type}</span>
+                        <div className="flex gap-3 border-b border-blue-700 pb-2">
+                            {selectedUnit.portrait && (
+                                <div className="w-16 h-16 shrink-0 bg-black/40 border border-blue-600 rounded overflow-hidden">
+                                    <img
+                                        src={selectedUnit.portrait}
+                                        alt={selectedUnit.name}
+                                        className="w-full h-full object-cover"
+                                        style={{ imageRendering: 'pixelated' }}
+                                    />
+                                </div>
+                            )}
+                            <div className="flex flex-col justify-center flex-1 min-w-0">
+                                <span className="text-yellow-400 font-bold text-xl truncate">{selectedUnit.name}</span>
+                                <span className="text-xs bg-blue-800 px-2 py-0.5 rounded text-blue-200 uppercase tracking-wider w-fit">{selectedUnit.type}</span>
+                            </div>
                         </div>
 
                         {/* Stats Grid */}
@@ -65,7 +77,11 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                             </div>
                             <div className="flex justify-between bg-blue-900/50 p-1 px-2 rounded">
                                 <span className="text-blue-300">RANGE</span>
-                                <span className="text-white font-bold">{selectedUnit.attackRangeMax}</span>
+                                <span className="text-white font-bold">
+                                    {selectedUnit.attackRangeMin !== selectedUnit.attackRangeMax
+                                        ? `${selectedUnit.attackRangeMin}-${selectedUnit.attackRangeMax}`
+                                        : selectedUnit.attackRangeMax}
+                                </span>
                             </div>
                             {selectedUnit.faction === Faction.PLAYER && (
                                 <div className="flex justify-between bg-blue-900/50 p-1 px-2 rounded">
@@ -104,48 +120,50 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 )}
             </RetroBox>
 
-            {/* Contextual Menus */}
-            {interactionMode === 'ACTION_SELECT' && (
-                <div className="flex flex-col gap-2">
-                    <RetroButton onClick={onEnterAttack} className="w-full bg-red-700 border-red-900">
-                        ATTACK
-                    </RetroButton>
-                    <RetroButton onClick={onEnterSpellMenu} className="w-full bg-purple-700 border-purple-900">
-                        CAST SPELL
-                    </RetroButton>
-                    <RetroButton onClick={onWait} className="w-full bg-gray-600 border-gray-800">
-                        WAIT
-                    </RetroButton>
-                    <RetroButton onClick={onUndo} className="w-full text-xs">
-                        CANCEL
-                    </RetroButton>
-                </div>
-            )}
-
-            {interactionMode === 'SPELL_MENU' && activeUnit?.spells && (
-                <div className="flex flex-col gap-2">
-                    {activeUnit.spells.map(spell => (
-                        <RetroButton key={spell.id} onClick={() => onSelectSpell && onSelectSpell(spell)} className="w-full bg-purple-600 border-purple-800">
-                            {spell.name}
+            {/* Contextual Menus - Fixed Height Container */}
+            <div className="flex flex-col min-h-[200px] justify-end gap-2">
+                {interactionMode === 'ACTION_SELECT' && (
+                    <>
+                        <RetroButton onClick={onEnterAttack} className="w-full bg-red-700 border-red-900">
+                            ATTACK
                         </RetroButton>
-                    ))}
-                    <RetroButton onClick={onUndo} className="w-full text-xs">
-                        BACK
-                    </RetroButton>
-                </div>
-            )}
+                        <RetroButton onClick={onEnterSpellMenu} className="w-full bg-purple-700 border-purple-900">
+                            CAST SPELL
+                        </RetroButton>
+                        <RetroButton onClick={onWait} className="w-full bg-gray-600 border-gray-800">
+                            WAIT
+                        </RetroButton>
+                        <RetroButton onClick={onUndo} className="w-full text-xs">
+                            CANCEL
+                        </RetroButton>
+                    </>
+                )}
 
-            {(interactionMode === 'MOVEMENT' || interactionMode === 'TARGETING_ATTACK' || interactionMode === 'TARGETING_SPELL') && (
-                <>
-                    <RetroButton onClick={onEndTurn} disabled={gameStatus !== GameStatus.PLAYING || isBusy} className="w-full text-lg">
-                        END PHASE
-                    </RetroButton>
+                {interactionMode === 'SPELL_MENU' && activeUnit?.spells && (
+                    <>
+                        {activeUnit.spells.map(spell => (
+                            <RetroButton key={spell.id} onClick={() => onSelectSpell && onSelectSpell(spell)} className="w-full bg-purple-600 border-purple-800">
+                                {spell.name}
+                            </RetroButton>
+                        ))}
+                        <RetroButton onClick={onUndo} className="w-full text-xs">
+                            BACK
+                        </RetroButton>
+                    </>
+                )}
 
-                    <RetroButton onClick={onQuit} disabled={isBusy} className="w-full text-sm bg-red-600 border-red-800 hover:bg-red-500">
-                        QUIT MISSION
-                    </RetroButton>
-                </>
-            )}
+                {(interactionMode === 'MOVEMENT' || interactionMode === 'TARGETING_ATTACK' || interactionMode === 'TARGETING_SPELL') && (
+                    <>
+                        <RetroButton onClick={onEndTurn} disabled={gameStatus !== GameStatus.PLAYING || isBusy} className="w-full text-lg">
+                            END TURN
+                        </RetroButton>
+
+                        <RetroButton onClick={onQuit} disabled={isBusy} className="w-full text-sm bg-red-600 border-red-800 hover:bg-red-500">
+                            QUIT MISSION
+                        </RetroButton>
+                    </>
+                )}
+            </div>
 
             <div className="text-neutral-500 text-xs text-center font-mono mt-4 flex flex-col gap-1">
                 {interactionMode === 'MOVEMENT' && <span>CLICK UNIT TO SELECT • CLICK BLUE TO MOVE</span>}

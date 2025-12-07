@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { TileData, Unit, Position, TerrainType, Faction, UnitType, Spell } from '../types';
-import { Swords, Skull, Crosshair, Zap } from 'lucide-react';
+import { getTilesInRange, getReachableTiles } from '../services/gameLogic';
 
-const TILE_SIZE = 48; // px
-const VIEWPORT_WIDTH = 15; // tiles
-const VIEWPORT_HEIGHT = 12; // tiles
+const TILE_SIZE = 96; // px - SCALED UP
+const VIEWPORT_WIDTH = 10; // tiles (Adjusted for larger tiles fitting 1920 but constrained)
+const VIEWPORT_HEIGHT = 8; // tiles
 
 interface CombatVisualState {
     shakingUnitId: string | null;
@@ -42,80 +42,629 @@ export const GameMap: React.FC<GameMapProps> = ({
     interactionMode,
     selectedSpell
 }) => {
-    const [hoverPos, setHoverPos] = useState<Position | null>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
     const [camera, setCamera] = useState({ x: 0, y: 0 });
+    const [scale, setScale] = useState(1); // Zoom Level
+    const lastHoverPos = useRef<Position | null>(null);
 
     // Drag Panning Refs
-    const isMouseDownRef = React.useRef(false);
-    const isDraggingRef = React.useRef(false);
-    const dragStartRef = React.useRef({ x: 0, y: 0 });
-    const camStartRef = React.useRef({ x: 0, y: 0 });
-    const clickBlockerRef = React.useRef(false);
-
-    const getTerrainColor = (type: TerrainType) => {
-        switch (type) {
-            case TerrainType.OPEN: return 'bg-emerald-900 border-emerald-950'; // Grass-like
-            case TerrainType.CLOSED: return 'bg-stone-800 border-stone-950'; // Wall
-            default: return 'bg-gray-900';
-        }
-    };
+    const isMouseDownRef = useRef(false);
+    const isDraggingRef = useRef(false);
+    const dragStartRef = useRef({ x: 0, y: 0 });
+    const camStartRef = useRef({ x: 0, y: 0 });
+    const clickBlockerRef = useRef(false);
 
     const width = map[0]?.length || 0;
     const height = map.length || 0;
 
-    // Viewport Limits
-    const maxScrollX = Math.max(0, (width * TILE_SIZE) - (VIEWPORT_WIDTH * TILE_SIZE));
-    const maxScrollY = Math.max(0, (height * TILE_SIZE) - (VIEWPORT_HEIGHT * TILE_SIZE));
+    // Viewport Limits (Dynamic based on scale)
+    const viewportWidthPx = VIEWPORT_WIDTH * TILE_SIZE;
+    const viewportHeightPx = VIEWPORT_HEIGHT * TILE_SIZE;
 
-    React.useEffect(() => {
-        const handleMouseMove = (e: MouseEvent) => {
-            if (isMouseDownRef.current) {
-                const dx = e.clientX - dragStartRef.current.x;
-                const dy = e.clientY - dragStartRef.current.y;
+    // Max scroll is: TotalWorldSize - VisibleWorldSize
+    // VisibleWorldSize = ViewportPx / Scale
+    const maxScrollX = Math.max(0, (width * TILE_SIZE) - (viewportWidthPx / scale));
+    const maxScrollY = Math.max(0, (height * TILE_SIZE) - (viewportHeightPx / scale));
 
-                // Threshold to detect drag
-                if (!isDraggingRef.current && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
-                    isDraggingRef.current = true;
-                    document.body.style.cursor = 'grabbing';
-                }
+    // Assets
+    const alaricSprite = useRef<HTMLImageElement | null>(null);
+    const alaricWalkSprite = useRef<HTMLImageElement | null>(null);
+    const archerSprite = useRef<HTMLImageElement | null>(null);
+    const wizardSprite = useRef<HTMLImageElement | null>(null);
 
-                if (isDraggingRef.current) {
-                    const newX = camStartRef.current.x - dx;
-                    const newY = camStartRef.current.y - dy;
+    // Load Sprites with Processing
+    useEffect(() => {
+        const processImage = async (filename: string, ref: React.MutableRefObject<HTMLImageElement | null>) => {
+            const img = new Image();
+            img.src = `${import.meta.env.BASE_URL}${filename}`;
+            await new Promise((resolve) => { img.onload = resolve; });
 
-                    setCamera({
-                        x: Math.round(Math.max(0, Math.min(newX, maxScrollX))),
-                        y: Math.round(Math.max(0, Math.min(newY, maxScrollY)))
-                    });
+            // Create processing canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            ctx.drawImage(img, 0, 0);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+
+            // 1. Chroma Key (Assume Top-Left pixel is background)
+            const rBg = data[0];
+            const gBg = data[1];
+            const bBg = data[2];
+            // Tolerance
+            const tol = 10;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const a = data[i + 3];
+
+                if (a === 0) continue;
+
+                if (Math.abs(r - rBg) < tol && Math.abs(g - gBg) < tol && Math.abs(b - bBg) < tol) {
+                    data[i + 3] = 0; // Transparent
                 }
             }
+
+            ctx.putImageData(imageData, 0, 0);
+
+            // Create final image from canvas (No Cropping)
+            const finalImg = new Image();
+            finalImg.src = canvas.toDataURL();
+            finalImg.onload = () => {
+                ref.current = finalImg;
+            };
         };
 
-        const handleMouseUp = () => {
+        processImage('alaric.png', alaricSprite);
+        processImage('alaric_walk.png', alaricWalkSprite);
+        processImage('archer.png', archerSprite);
+        processImage('wizard.png', wizardSprite);
+    }, []);
+
+    // State for Animations
+    const displayedHp = useRef<{ [id: string]: number }>({});
+    const displayedPos = useRef<{ [id: string]: { x: number, y: number } }>({});
+
+    // State for Hover Prediction
+    const [hoverMoveTiles, setHoverMoveTiles] = useState<Position[]>([]);
+    const [hoverAttackTiles, setHoverAttackTiles] = useState<Position[]>([]);
+
+    // Camera Snap for Active Enemy
+    useEffect(() => {
+        if (!selectedUnitId) return;
+        const unit = units.find(u => u.id === selectedUnitId);
+
+        // Only snap for enemies
+        if (unit && unit.faction === Faction.ENEMY) {
+            const targetWorldX = unit.position.x * TILE_SIZE + TILE_SIZE / 2;
+            const targetWorldY = unit.position.y * TILE_SIZE + TILE_SIZE / 2;
+
+            const viewW = VIEWPORT_WIDTH * TILE_SIZE;
+            const viewH = VIEWPORT_HEIGHT * TILE_SIZE;
+
+            // Center: WorldPos - (ViewSize/2)/Scale
+            const camX = targetWorldX - (viewW / (2 * scale));
+            const camY = targetWorldY - (viewH / (2 * scale));
+
+            setCamera({
+                x: Math.round(Math.max(0, Math.min(camX, maxScrollX))),
+                y: Math.round(Math.max(0, Math.min(camY, maxScrollY)))
+            });
+        }
+    }, [selectedUnitId, units, scale, maxScrollX, maxScrollY]);
+
+    // RENDER LOOP
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.imageSmoothingEnabled = false; // Pixel Art key!
+
+        let animationFrameId: number;
+
+        const render = () => {
+            // ... existing clear and translate ...
+            // Clear
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Save context for camera translation
+            ctx.save();
+            ctx.scale(scale, scale);
+            ctx.translate(-camera.x, -camera.y);
+
+            // 1. Draw Map Terrain
+            map.forEach((row, y) => {
+                row.forEach((tile, x) => {
+                    const px = x * TILE_SIZE;
+                    const py = y * TILE_SIZE;
+
+                    if (tile.terrain === TerrainType.CLOSED) {
+                        ctx.fillStyle = '#292524';
+                        ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                        ctx.strokeStyle = '#0c0a09';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(px, py, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = '#1c1917';
+                        ctx.beginPath();
+                        ctx.arc(px + TILE_SIZE / 2, py + TILE_SIZE / 2, 12, 0, Math.PI * 2); // Scaled dot
+                        ctx.fill();
+                    } else {
+                        ctx.fillStyle = '#064e3b';
+                        ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+                        ctx.strokeStyle = '#022c22';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(px, py, TILE_SIZE, TILE_SIZE);
+                    }
+                });
+            });
+
+            // 2. Highlights
+            if (reachableTiles.length > 0) {
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+                ctx.strokeStyle = 'rgba(147, 197, 253, 0.8)';
+                ctx.lineWidth = 4;
+                reachableTiles.forEach(p => {
+                    ctx.fillRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    ctx.strokeRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                });
+            }
+            if (attackRange.length > 0) {
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.6)'; // Unified with ActionTargets
+                ctx.lineWidth = 4;
+                attackRange.forEach(p => {
+                    ctx.strokeRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                });
+            }
+
+            // Enemy Hover Range (Red Dashed?) - Using same style as attackRange but maybe distinct?
+            // User requested: "same kind of highlight as the attack indicator for players"
+            // Hover: Blue Move Tiles
+            if (hoverMoveTiles.length > 0) {
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+                ctx.strokeStyle = 'rgba(147, 197, 253, 0.6)';
+                ctx.lineWidth = 4;
+                hoverMoveTiles.forEach(p => {
+                    ctx.fillRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    ctx.strokeRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                });
+            }
+
+            // Hover: Red Attack Tiles (Potential)
+            if (hoverAttackTiles.length > 0) {
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
+                ctx.lineWidth = 4;
+                hoverAttackTiles.forEach(p => {
+                    ctx.strokeRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                });
+            }
+
+            if (actionTargets.length > 0) {
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.6)';
+                ctx.lineWidth = 4;
+                actionTargets.forEach(p => {
+                    ctx.strokeRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                });
+            }
+
+            // ... rest of render ...
+
+
+            // Hover Box
+            if (lastHoverPos.current) {
+                const { x, y } = lastHoverPos.current;
+                let isAOE = false;
+                if (interactionMode === 'TARGETING_SPELL' && selectedSpell) {
+                    const isHoverValid = actionTargets.some(p => p.x === x && p.y === y);
+                    if (isHoverValid) {
+                        ctx.fillStyle = 'rgba(168, 85, 247, 0.6)';
+                        const radius = selectedSpell.radius;
+                        for (let ry = -radius; ry <= radius; ry++) {
+                            for (let rx = -radius; rx <= radius; rx++) {
+                                if (Math.abs(rx) <= radius && Math.abs(ry) <= radius) {
+                                    const tx = x + rx;
+                                    const ty = y + ry;
+                                    if (tx >= 0 && tx < width && ty >= 0 && ty < height) {
+                                        ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                                    }
+                                }
+                            }
+                        }
+                        isAOE = true;
+                    }
+                }
+                if (!isAOE) {
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                }
+            }
+
+            // 3. Draw Units
+            units.forEach(unit => {
+                if (combatState.dyingUnitIds.includes(unit.id)) {
+                    ctx.globalAlpha = 0.5;
+                }
+
+                // HP Interpolation
+                if (displayedHp.current[unit.id] === undefined) {
+                    displayedHp.current[unit.id] = unit.hp;
+                } else {
+                    const diff = unit.hp - displayedHp.current[unit.id];
+                    if (Math.abs(diff) > 0.01) {
+                        displayedHp.current[unit.id] += diff * 0.1;
+                    } else {
+                        displayedHp.current[unit.id] = unit.hp;
+                    }
+                }
+
+                // Pos Interpolation
+                const targetX = unit.position.x * TILE_SIZE;
+                const targetY = unit.position.y * TILE_SIZE;
+
+                if (!displayedPos.current[unit.id]) {
+                    displayedPos.current[unit.id] = { x: targetX, y: targetY };
+                }
+
+                const dx = targetX - displayedPos.current[unit.id].x;
+                const dy = targetY - displayedPos.current[unit.id].y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                const speed = 15; // Speed of movement
+
+                let isMoving = false;
+                if (dist > 1) {
+                    isMoving = true;
+                    const moveDist = Math.min(dist, speed);
+                    const angle = Math.atan2(dy, dx);
+                    displayedPos.current[unit.id].x += Math.cos(angle) * moveDist;
+                    displayedPos.current[unit.id].y += Math.sin(angle) * moveDist;
+                } else {
+                    displayedPos.current[unit.id].x = targetX;
+                    displayedPos.current[unit.id].y = targetY;
+                }
+
+                let drawX = displayedPos.current[unit.id].x;
+                let drawY = displayedPos.current[unit.id].y;
+
+                // Lunge Offset
+                if (unit.id === combatState.attackerId && (combatState as any).attackTarget) {
+                    const target = (combatState as any).attackTarget;
+                    const lungeDx = (target.x - unit.position.x) * (TILE_SIZE * 0.5);
+                    const lungeDy = (target.y - unit.position.y) * (TILE_SIZE * 0.5);
+                    drawX += lungeDx;
+                    drawY += lungeDy;
+                }
+
+                if (unit.id === combatState.shakingUnitId) {
+                    drawX += (Math.random() * 8 - 4); // Scaled Shake
+                    drawY += (Math.random() * 8 - 4);
+                }
+
+                // --- RENDER UNIT ---
+                const padding = 4; // SCALED
+                const innerSize = TILE_SIZE - padding * 2;
+                const drawX_Inner = drawX + padding;
+                const drawY_Inner = drawY + padding;
+
+                // Combined HP & Name Bar (Bottom) - Defined early for layout
+                const barHeight = 24;
+
+                // Check Sprite
+                const isAlaric = (unit.name === 'Sir Alaric' || unit.name === 'Alaric');
+                const isArcher = (unit.type === UnitType.ARCHER && unit.faction === Faction.PLAYER);
+                const isWizard = (unit.type === UnitType.WIZARD && unit.faction === Faction.PLAYER);
+
+                // Determine if Walking: Actually moving OR (Selected AND Movement Phase AND Not Exhausted)
+                // We check interactionMode to ensure we stop walking when in Action Phase (ACTION_SELECT/TARGETING)
+                const isSelectedForMovement = (unit.id === selectedUnitId && interactionMode === 'MOVEMENT' && !unit.hasMoved);
+                const shouldUseWalkAnim = isMoving || isSelectedForMovement;
+
+                // Priority: Walking Sprint -> Idle Sprite (or fallback)
+                let spriteToUse = null;
+                if (isAlaric) {
+                    if (shouldUseWalkAnim && alaricWalkSprite.current) {
+                        spriteToUse = alaricWalkSprite.current;
+                    } else if (alaricSprite.current) {
+                        spriteToUse = alaricSprite.current;
+                    }
+                } else if (isArcher && archerSprite.current) {
+                    spriteToUse = archerSprite.current;
+                } else if (isWizard && wizardSprite.current) {
+                    spriteToUse = wizardSprite.current;
+                }
+
+                if (spriteToUse) {
+                    // Frame Logic
+                    const now = Date.now();
+                    // Faster animation for walking
+                    const animSpeed = shouldUseWalkAnim ? 200 : 500;
+                    // If exhausted and not moving, freeze on frame 0
+                    const frame = (unit.hasMoved && !isMoving) ? 0 : Math.floor(now / animSpeed) % 2;
+
+                    if (unit.hasMoved && !isMoving) {
+                        ctx.filter = 'grayscale(100%) brightness(70%)';
+                    }
+
+                    const img = spriteToUse;
+
+                    // Fixed Frame Logic (96x96 with Gap support)
+                    const frameSize = 96;
+                    // Detect frame count based on width (approximate for gap)
+                    // Width = (Count * 96) + ((Count - 1) * 4)
+                    // Count = (Width + 4) / 100
+                    const frameCount = Math.round((img.width + 4) / 100);
+
+                    let gap = 0;
+                    if (frameCount > 1) {
+                        gap = (img.width - (frameSize * frameCount)) / (frameCount - 1);
+                    }
+
+                    // Recalculate frame based on actual count
+                    const animFrame = (unit.hasMoved && !isMoving) ? 0 : Math.floor(now / animSpeed) % frameCount;
+
+                    // Source Rect
+                    const sx = animFrame * (frameSize + gap);
+                    const sy = 0;
+                    const sw = frameSize;
+                    const sh = img.height;
+
+                    // Layout Logic: Fit ABOVE the bar
+                    const availableHeight = innerSize - barHeight;
+
+                    // Aspect Ratio Logic
+                    const ratio = Math.min(innerSize / sw, availableHeight / sh);
+                    const dstW = Math.floor(sw * ratio);
+                    const dstH = Math.floor(sh * ratio);
+
+                    // Center it horizontally
+                    const dstX = Math.floor(drawX_Inner + (innerSize - dstW) / 2);
+                    // Align to bottom of available space (just above bar)
+                    const dstY = Math.floor(drawY_Inner + availableHeight - dstH);
+
+                    ctx.drawImage(
+                        img,
+                        sx, sy, sw, sh,
+                        dstX, dstY, dstW, dstH
+                    );
+
+                    ctx.filter = 'none';
+
+                    if (unit.id === selectedUnitId) {
+                        ctx.strokeStyle = '#facc15';
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(drawX_Inner, drawY_Inner, innerSize, innerSize);
+                    }
+                } else {
+                    // Card Fallback
+                    ctx.fillStyle = unit.faction === Faction.PLAYER ? '#2563eb' : '#b91c1c';
+                    if (unit.hasMoved) ctx.fillStyle = '#52525b';
+                    ctx.fillRect(drawX_Inner, drawY_Inner, innerSize, innerSize);
+
+                    if (unit.id === selectedUnitId) {
+                        ctx.strokeStyle = '#facc15';
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(drawX_Inner, drawY_Inner, innerSize, innerSize);
+                    }
+
+                    // Symbol
+                    // Center Y = (BarBottom + NameTop) / 2
+                    const barHeightForCalc = 20;
+                    const nameHeightForCalc = 20;
+                    const nameYForCalc = drawY_Inner + innerSize - nameHeightForCalc;
+                    const centerY = (drawY_Inner + barHeightForCalc + nameYForCalc) / 2;
+
+                    ctx.font = 'bold 36px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = 'white';
+                    ctx.shadowColor = 'black';
+                    ctx.shadowBlur = 3;
+                    let symbol = '?';
+                    if (unit.type === UnitType.ARCHER) symbol = 'A';
+                    if (unit.type === UnitType.WIZARD) symbol = 'W';
+                    if (unit.type === UnitType.MAGE) symbol = 'M';
+                    ctx.fillText(symbol, drawX_Inner + innerSize / 2, centerY);
+                    ctx.shadowBlur = 0;
+                }
+
+                const nameY = drawY_Inner + innerSize - barHeight;
+                const hpPct = Math.max(0, displayedHp.current[unit.id] / unit.maxHp);
+
+                // 1. Background (Missing Health - Dark Red)
+                ctx.fillStyle = '#7f1d1d';
+                ctx.fillRect(drawX_Inner, nameY, innerSize, barHeight);
+
+                // 2. Foreground (Current Health - Green)
+                ctx.fillStyle = '#16a34a';
+                ctx.fillRect(drawX_Inner, nameY, innerSize * hpPct, barHeight);
+
+                // 3. Text (Name overlay)
+                ctx.font = 'bold 16px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'white';
+                ctx.shadowColor = 'black';
+                ctx.shadowBlur = 4;
+                ctx.fillText(unit.name, drawX_Inner + innerSize / 2, nameY + barHeight / 2);
+                ctx.shadowBlur = 0;
+
+                ctx.globalAlpha = 1.0;
+            });
+
+            ctx.restore();
+
+            animationFrameId = requestAnimationFrame(render);
+        };
+
+        render();
+        return () => cancelAnimationFrame(animationFrameId);
+
+    }, [map, units, selectedUnitId, reachableTiles, attackRange, actionTargets, combatState, camera, interactionMode, selectedSpell, hoverMoveTiles, hoverAttackTiles]);
+
+    // --- INPUT HANDLING ---
+
+    const getTileFromEvent = (clientX: number, clientY: number) => {
+        if (!canvasRef.current) return null;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
+
+        // Apply visual scale and camera
+        const worldX = (mouseX / scale) + camera.x;
+        const worldY = (mouseY / scale) + camera.y;
+
+        const tx = Math.floor(worldX / TILE_SIZE);
+        const ty = Math.floor(worldY / TILE_SIZE);
+        return { x: tx, y: ty };
+    };
+
+    const handleWheel = (e: React.WheelEvent) => {
+        // e.preventDefault(); // React synthetic event might not support this same way for passive? 
+        // standard onWheel is fine.
+
+        const zoomIntensity = 0.1;
+        const delta = -Math.sign(e.deltaY);
+        const newScale = Math.min(Math.max(0.5, scale + delta * zoomIntensity), 2);
+
+        if (!canvasRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        // World Pos before zoom
+        const worldX = (mouseX / scale) + camera.x;
+        const worldY = (mouseY / scale) + camera.y;
+
+        // Calculate Max Scroll for New Scale
+        const newMaxScrollX = Math.max(0, (width * TILE_SIZE) - (viewportWidthPx / newScale));
+        const newMaxScrollY = Math.max(0, (height * TILE_SIZE) - (viewportHeightPx / newScale));
+
+        const newCamX = worldX - (mouseX / newScale);
+        const newCamY = worldY - (mouseY / newScale);
+
+        setScale(newScale);
+        setCamera({
+            x: Math.round(Math.max(0, Math.min(newCamX, newMaxScrollX))),
+            y: Math.round(Math.max(0, Math.min(newCamY, newMaxScrollY)))
+        });
+    };
+
+    const handleMouseMove = (e: React.MouseEvent | MouseEvent) => {
+        // Drag Logic
+        if (isMouseDownRef.current) {
+            const dx = e.clientX - dragStartRef.current.x;
+            const dy = e.clientY - dragStartRef.current.y;
+
+            if (!isDraggingRef.current && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+                isDraggingRef.current = true;
+                document.body.style.cursor = 'grabbing';
+            }
+
             if (isDraggingRef.current) {
-                clickBlockerRef.current = true;
-                setTimeout(() => clickBlockerRef.current = false, 50);
-                document.body.style.cursor = 'default';
+                // Dragging moves camera
+                // Since we are dragging *screen pixels*, and camera is *world pixels*:
+                // WorldDelta = ScreenDelta / Scale
+                const wDx = dx / scale;
+                const wDy = dy / scale;
+
+                const newX = camStartRef.current.x - wDx;
+                const newY = camStartRef.current.y - wDy;
+
+                setCamera({
+                    x: Math.round(Math.max(0, Math.min(newX, maxScrollX))),
+                    y: Math.round(Math.max(0, Math.min(newY, maxScrollY)))
+                });
             }
-            isMouseDownRef.current = false;
-            isDraggingRef.current = false;
-        };
+        }
 
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
+        // Hover Logic
+        // We use the same event for hover calc, but relative to canvas
+        const pos = getTileFromEvent(e.clientX, e.clientY);
+        if (pos) {
+            // Boundary Check
+            if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
+                if (!lastHoverPos.current || pos.x !== lastHoverPos.current.x || pos.y !== lastHoverPos.current.y) {
+                    lastHoverPos.current = pos;
+                    if (onHover) onHover(pos);
 
-        return () => {
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
-        };
-    }, [maxScrollX, maxScrollY]);
+                    // Hover Prediction Check
+                    const hoveredUnit = units.find(u => u.position.x === pos.x && u.position.y === pos.y);
+                    if (hoveredUnit) {
+                        // 1. Calculate Move Tiles (Blue)
+                        const moves = getReachableTiles(hoveredUnit, units, map);
+                        setHoverMoveTiles(moves);
+
+                        // 2. Calculate Potential Attacks (Red) from ALL move tiles
+                        const attackSet = new Set<string>();
+                        moves.forEach(m => {
+                            const rangeTiles = getTilesInRange(m, hoveredUnit.attackRangeMin, hoveredUnit.attackRangeMax, width, height);
+                            rangeTiles.forEach(rt => {
+                                const key = `${rt.x},${rt.y}`;
+                                attackSet.add(key);
+                            });
+                        });
+
+                        // Convert Set to Array and Filter out Moves
+                        const attacks: Position[] = [];
+                        attackSet.forEach(key => {
+                            const [ax, ay] = key.split(',').map(Number);
+                            // Check if in moves
+                            const isMove = moves.some(m => m.x === ax && m.y === ay);
+                            if (!isMove) {
+                                attacks.push({ x: ax, y: ay });
+                            }
+                        });
+
+                        setHoverAttackTiles(attacks);
+
+                    } else {
+                        setHoverMoveTiles([]);
+                        setHoverAttackTiles([]);
+                    }
+                }
+            } else {
+                if (lastHoverPos.current) {
+                    lastHoverPos.current = null;
+                    if (onHover) onHover(null);
+                    setHoverMoveTiles([]);
+                    setHoverAttackTiles([]);
+                }
+            }
+        }
+    };
+
+    const handleMouseUp = () => {
+        if (isDraggingRef.current) {
+            clickBlockerRef.current = true;
+            setTimeout(() => clickBlockerRef.current = false, 50);
+            document.body.style.cursor = 'default';
+        }
+        isMouseDownRef.current = false;
+        isDraggingRef.current = false;
+    };
 
     const handleMouseDown = (e: React.MouseEvent) => {
-        if (e.button !== 0) return; // Only left click
+        if (e.button !== 0) return; // Left click only for nav
         isMouseDownRef.current = true;
         dragStartRef.current = { x: e.clientX, y: e.clientY };
         camStartRef.current = { x: camera.x, y: camera.y };
         isDraggingRef.current = false;
+    };
+
+    const handleClick = (e: React.MouseEvent) => {
+        if (clickBlockerRef.current) return;
+        const pos = getTileFromEvent(e.clientX, e.clientY);
+        if (pos && pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
+            onTileClick(pos);
+        }
     };
 
     const handleContextMenu = (e: React.MouseEvent) => {
@@ -123,170 +672,38 @@ export const GameMap: React.FC<GameMapProps> = ({
         if (onRightClick) onRightClick();
     };
 
-    const onWrapperClick = (x: number, y: number) => {
-        if (!clickBlockerRef.current) {
-            onTileClick({ x, y });
-        }
-    };
+    // Global event listeners for drag up/zoom outside canvas
+    useEffect(() => {
+        const globalMove = (e: MouseEvent) => handleMouseMove(e);
+        const globalUp = () => handleMouseUp();
 
-    const handleMouseEnterTile = (pos: Position) => {
-        setHoverPos(pos);
-        if (onHover) onHover(pos);
-    };
-
-    const handleMouseLeaveMap = () => {
-        setHoverPos(null);
-        if (onHover) onHover(null);
-    };
+        window.addEventListener('mousemove', globalMove);
+        window.addEventListener('mouseup', globalUp);
+        return () => {
+            window.removeEventListener('mousemove', globalMove);
+            window.removeEventListener('mouseup', globalUp);
+        };
+    }, [camera]);
 
     return (
         <div
-            className="relative bg-black shadow-2xl rounded overflow-hidden select-none border-4 border-gray-800 box-content"
+            className="relative shadow-2xl rounded overflow-hidden border-4 border-gray-800"
             style={{
                 width: Math.min(width, VIEWPORT_WIDTH) * TILE_SIZE,
                 height: Math.min(height, VIEWPORT_HEIGHT) * TILE_SIZE
             }}
-            onMouseLeave={handleMouseLeaveMap}
-            onMouseDown={handleMouseDown}
             onContextMenu={handleContextMenu}
         >
-            <div
-                className="absolute top-0 left-0 transition-transform duration-0"
-                style={{ transform: `translate(-${camera.x}px, -${camera.y}px)` }}
-            >
-                {map.map((row, y) => (
-                    row.map((tile, x) => {
-                        const isReachable = reachableTiles.some(p => p.x === x && p.y === y);
-                        const isInAttackRange = attackRange.some(p => p.x === x && p.y === y);
-                        const isAttackTarget = actionTargets.some(p => p.x === x && p.y === y);
-                        const isClosed = tile.terrain === TerrainType.CLOSED;
-
-                        // AOE Visualization
-                        let isAOE = false;
-
-                        if (interactionMode === 'TARGETING_SPELL' && selectedSpell && hoverPos) {
-                            // 1. Is the HOVERED tile a valid target center?
-                            const isHoverValid = actionTargets.some(p => p.x === hoverPos.x && p.y === hoverPos.y);
-
-                            // 2. If valid, check if THIS tile is in radius
-                            if (isHoverValid) {
-                                const radius = selectedSpell.radius;
-                                const distX = Math.abs(x - hoverPos.x);
-                                const distY = Math.abs(y - hoverPos.y);
-                                // Square AOE
-                                if (distX <= radius && distY <= radius) {
-                                    isAOE = true;
-                                }
-                            }
-                        }
-
-                        return (
-                            <div
-                                key={`${x}-${y}`}
-                                className={`
-                    absolute border-r border-b border-black/20
-                    ${isClosed ? '' : 'cursor-pointer hover:brightness-110'}
-                    ${getTerrainColor(tile.terrain)}
-                    transition-all duration-100
-                `}
-                                style={{
-                                    width: TILE_SIZE,
-                                    height: TILE_SIZE,
-                                    left: x * TILE_SIZE,
-                                    top: y * TILE_SIZE
-                                }}
-                                onClick={() => onWrapperClick(x, y)}
-                                onMouseEnter={() => handleMouseEnterTile({ x, y })}
-                            >
-                                {isClosed && (
-                                    <div className="absolute inset-0 flex items-center justify-center opacity-30">
-                                        <div className="w-4 h-4 bg-black/40 rounded-full"></div>
-                                    </div>
-                                )}
-                                {isReachable && (
-                                    <div className="absolute inset-0 bg-blue-500/40 animate-pulse border-2 border-blue-300 z-10"></div>
-                                )}
-                                {isInAttackRange && !isAOE && (
-                                    <div className="absolute inset-0 bg-red-500/20 z-10"></div>
-                                )}
-                                {isAttackTarget && !isAOE && (
-                                    <div className="absolute inset-0 border-2 border-red-500/50 z-20"></div>
-                                )}
-                                {isAOE && (
-                                    <div className="absolute inset-0 bg-purple-500/60 animate-pulse border-2 border-purple-300 z-30 flex items-center justify-center">
-                                        <Zap size={24} className="text-white opacity-80" />
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })
-                ))}
-
-                {/* Layer 2: Units */}
-                <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-40">
-                    {units.map(unit => {
-                        const isSelected = unit.id === selectedUnitId;
-                        const isShaking = unit.id === combatState.shakingUnitId;
-                        const isDying = combatState.dyingUnitIds.includes(unit.id);
-                        const isAttacker = unit.id === combatState.attackerId;
-
-                        // Apply Lunge Offset if attacking
-                        const transformStyle = isAttacker
-                            ? `translate(${combatState.attackOffset.x}px, ${combatState.attackOffset.y}px)`
-                            : 'translate(0,0)';
-
-                        return (
-                            <div
-                                key={unit.id}
-                                className={`
-                    absolute flex items-center justify-center transition-all duration-300 ease-in-out
-                    ${isDying ? 'scale-0 opacity-0 delay-300' : 'scale-100 opacity-100'}
-                    `}
-                                style={{
-                                    left: unit.position.x * TILE_SIZE,
-                                    top: unit.position.y * TILE_SIZE,
-                                    width: TILE_SIZE,
-                                    height: TILE_SIZE,
-                                }}
-                            >
-                                <div
-                                    className={`
-                        relative w-[90%] h-[90%] flex flex-col items-center justify-center rounded-sm shadow-md transition-transform duration-100
-                        ${unit.faction === Faction.PLAYER ? 'bg-blue-600' : 'bg-red-700'}
-                        ${unit.hasMoved ? 'grayscale brightness-75' : ''}
-                        ${isSelected ? 'ring-2 ring-yellow-400' : ''}
-                        ${isShaking ? 'shake' : ''}
-                    `}
-                                    style={{ transform: transformStyle }}
-                                >
-                                    {/* Top HP Bar */}
-                                    <div className="absolute top-0 left-0 right-0 h-3 bg-red-900 border-b border-black/50 overflow-hidden">
-                                        <div
-                                            className="h-full bg-red-500 transition-all duration-300"
-                                            style={{ width: `${(unit.hp / unit.maxHp) * 100}%` }}
-                                        />
-                                        <div className="absolute inset-0 flex items-center justify-center text-[8px] text-white font-bold leading-none shadow-black drop-shadow-md">
-                                            {unit.hp}/{unit.maxHp}
-                                        </div>
-                                    </div>
-
-                                    <div className="flex-1 flex items-center justify-center mt-2">
-                                        {((unit.faction === Faction.PLAYER && unit.type === UnitType.KNIGHT) || unit.type === UnitType.KNIGHT) && <Swords size={20} className="text-white" />}
-                                        {unit.faction === Faction.PLAYER && unit.type === UnitType.ARCHER && <Crosshair size={20} className="text-white" />}
-                                        {unit.faction === Faction.PLAYER && unit.type === UnitType.WIZARD && <Zap size={20} className="text-white" />}
-                                        {unit.faction === Faction.ENEMY && unit.type !== UnitType.KNIGHT && <Skull size={20} className="text-white" />}
-                                    </div>
-
-                                    {/* Bottom Name */}
-                                    <div className="mb-1 text-[8px] text-white font-bold text-center leading-none px-1 shadow-black drop-shadow-md whitespace-nowrap overflow-hidden text-ellipsis w-full">
-                                        {unit.name}
-                                    </div>
-                                </div>
-                            </div>
-                        )
-                    })}
-                </div>
-            </div>
+            <canvas
+                ref={canvasRef}
+                width={Math.min(width, VIEWPORT_WIDTH) * TILE_SIZE}
+                height={Math.min(height, VIEWPORT_HEIGHT) * TILE_SIZE}
+                className="block cursor-pointer"
+                onMouseDown={handleMouseDown}
+                onClick={handleClick}
+                onWheel={handleWheel}
+                onMouseMove={(e) => { }}
+            />
         </div>
     );
 };

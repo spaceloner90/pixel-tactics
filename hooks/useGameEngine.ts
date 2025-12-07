@@ -15,6 +15,7 @@ export const useGameEngine = () => {
     // Global Game State
     const [gameStatus, setGameStatus] = useState<GameStatus>(GameStatus.MENU);
     const [currentLevel, setCurrentLevel] = useState<LevelConfig | null>(null);
+    const [activeFaction, setActiveFaction] = useState<Faction>(Faction.PLAYER);
 
     // Map/Unit State
     const [map, setMap] = useState<TileData[][]>([]);
@@ -33,13 +34,28 @@ export const useGameEngine = () => {
     const [attackRange, setAttackRange] = useState<Position[]>([]); // Visual only
     const [actionTargets, setActionTargets] = useState<Position[]>([]); // Clickable targets (Red tiles)
 
-    // UI State
+    // UI/Visual State
     const [systemMessage, setSystemMessage] = useState("Welcome, Commander.");
     const [history, setHistory] = useState<HistorySnapshot[]>([]);
     const [preMoveState, setPreMoveState] = useState<HistorySnapshot | null>(null); // For 'Cancel Move'
     const [isBusy, setIsBusy] = useState(false);
 
+    // Visuals (Animations)
+    const [visuals, setVisuals] = useState<{
+        shakingUnitId: string | null;
+        dyingUnitIds: string[];
+        attackerId: string | null;
+        attackTarget: Position | null;
+    }>({
+        shakingUnitId: null,
+        dyingUnitIds: [],
+        attackerId: null,
+        attackTarget: null
+    });
+
     // --- Helpers ---
+    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
     const createSnapshot = (): HistorySnapshot => ({
         units: JSON.parse(JSON.stringify(unitsRef.current)),
         turn,
@@ -80,6 +96,35 @@ export const useGameEngine = () => {
         }
     };
 
+    // --- Animation Actions ---
+    const performAttackAnimation = async (attackerId: string, targetPos: Position, targetId: string) => {
+        // Start Lunge Visual
+        setVisuals(prev => ({ ...prev, attackerId, attackTarget: targetPos }));
+        await wait(250); // Swing Fore
+
+        // Impact / Shake
+        setVisuals(prev => ({ ...prev, shakingUnitId: targetId }));
+        await wait(100);
+
+        // Reset Lunge
+        setVisuals(prev => ({ ...prev, attackerId: null, attackTarget: null }));
+        await wait(150); // Finish Shake
+
+        setVisuals(prev => ({ ...prev, shakingUnitId: null }));
+    };
+
+    const performDeathAnimation = async (unitId: string) => {
+        setVisuals(prev => ({ ...prev, dyingUnitIds: [...prev.dyingUnitIds, unitId] }));
+        await wait(450);
+
+        // Actually remove unit
+        const nextUnits = unitsRef.current.filter(u => u.id !== unitId);
+        setUnits(nextUnits);
+
+        setVisuals(prev => ({ ...prev, dyingUnitIds: prev.dyingUnitIds.filter(id => id !== unitId) }));
+        checkWinLoss(nextUnits, turn);
+    };
+
     // --- Core Actions ---
 
     const startLevel = (config: LevelConfig) => {
@@ -104,6 +149,7 @@ export const useGameEngine = () => {
         setSystemMessage(config.description);
         setHistory([]);
         setPreMoveState(null);
+        setActiveFaction(Faction.PLAYER);
 
         // Ensure clean slate interactions
         setSelectedUnitId(null);
@@ -132,6 +178,9 @@ export const useGameEngine = () => {
     };
 
     const selectUnit = (id: string) => {
+        // Block player selection during enemy turn
+        if (activeFaction !== Faction.PLAYER) return;
+
         const unit = units.find(u => u.id === id);
         if (!unit) return;
 
@@ -231,18 +280,18 @@ export const useGameEngine = () => {
         }
     };
 
-    const attackUnit = (attackerId: string, targetPos: Position) => {
+    // Updated attackUnit to be async and handle animations internally (exposed via return/visuals)
+    // The previous App.tsx logic is now partly here, but App.tsx loops on `isKill`.
+    // Let's consolidate: `executeAttack`
+
+    // Core Logic (Data only)
+    const applyDamage = (attackerId: string, targetPos: Position) => {
         const attacker = unitsRef.current.find(u => u.id === attackerId);
         const targetUnit = unitsRef.current.find(u => u.position.x === targetPos.x && u.position.y === targetPos.y);
 
         if (!attacker || !targetUnit) return { success: false };
 
-        // Push to permanent history (committing the move if we had a preMoveState)
-        if (preMoveState) {
-            setHistory(prev => [...prev, preMoveState]);
-        }
-
-        const damage = 1;
+        const damage = 1; // Base damage
         const newHp = targetUnit.hp - damage;
         let nextUnits = [...unitsRef.current];
         let message = "";
@@ -251,7 +300,6 @@ export const useGameEngine = () => {
         if (newHp <= 0) {
             message = `${targetUnit.name} destroyed!`;
             isKill = true;
-            // Keep unit in state for animation, handle removal in UI layer
             nextUnits = unitsRef.current.map(u => {
                 if (u.id === targetUnit.id) return { ...u, hp: 0 };
                 if (u.id === attackerId) return { ...u, hasMoved: true };
@@ -269,30 +317,53 @@ export const useGameEngine = () => {
         setUnits(nextUnits);
         setSystemMessage(message);
 
-        // Cleanup
-        endUnitAction(attackerId, nextUnits);
-        // checkWinLoss REMOVED here to allow animation to finish
-        return { success: true, damage, isKill };
+        return { success: true, damage, isKill, targetId: targetUnit.id };
     };
 
-    const castSpell = (targetPos: Position) => {
+    // Public Action for interactions (async)
+    const attackUnit = async (attackerId: string, targetPos: Position) => {
+        setIsBusy(true);
+        const targetUnit = units.find(u => u.position.x === targetPos.x && u.position.y === targetPos.y);
+
+        if (targetUnit) {
+            await performAttackAnimation(attackerId, targetPos, targetUnit.id);
+        }
+
+        const result = applyDamage(attackerId, targetPos);
+
+        if (result.success && result.isKill && result.targetId) {
+            await performDeathAnimation(result.targetId);
+        }
+
+        if (preMoveState) {
+            setHistory(prev => [...prev, preMoveState]);
+        }
+
+        endUnitAction(attackerId);
+        setIsBusy(false);
+        return result;
+    };
+
+
+    const castSpell = async (targetPos: Position) => {
         const attacker = unitsRef.current.find(u => u.id === selectedUnitId);
         if (!attacker || !selectedSpell) return;
+
+        setIsBusy(true);
 
         // Commit Move
         if (preMoveState) {
             setHistory(prev => [...prev, preMoveState]);
         }
 
+        // Animation (Reuse attack/lunge for cast)
+        await performAttackAnimation(attacker.id, targetPos, "NONE"); // No shake yet
+
         // Calculate AOE
         const affectedTiles = getTilesInRadius(targetPos, selectedSpell.radius, map[0].length, map.length);
 
         let nextUnits = [...unitsRef.current];
         let hitCount = 0;
-
-        // Apply Damage
-        // We need to process hits carefully to avoid mutating nextUnits in loop weirdly
-        // Better: calc new HP state for all units
         const deadUnitIds: string[] = [];
 
         nextUnits = nextUnits.map(u => {
@@ -301,13 +372,10 @@ export const useGameEngine = () => {
                 hitCount++;
                 const newHp = u.hp - selectedSpell.damage;
                 if (newHp <= 0) deadUnitIds.push(u.id);
-                // Clamp to 0 if dead, but keep in array
                 return { ...u, hp: Math.max(0, newHp) };
             }
             return u;
         });
-
-        // Filter dead - DEFER to UI for animation (removed filter)
 
         // Mark caster as moved
         nextUnits = nextUnits.map(u => u.id === attacker.id ? { ...u, hasMoved: true } : u);
@@ -315,14 +383,17 @@ export const useGameEngine = () => {
         setUnits(nextUnits);
         setSystemMessage(`Cast ${selectedSpell.name}! Hit ${hitCount} units.`);
 
+        // Death Animations (Parallel or Seq?) - Seq is safer
+        for (const deadId of deadUnitIds) {
+            await performDeathAnimation(deadId);
+        }
+
         endUnitAction(attacker.id, nextUnits);
-        // checkWinLoss REMOVED here to allow animation to finish
+        setIsBusy(false);
     };
 
     const endUnitAction = (unitId: string, currentUnits = units) => {
-        // Ensure hasMoved is set if not already (safeguard)
         setUnits(prev => prev.map(u => u.id === unitId ? { ...u, hasMoved: true } : u));
-
         setSelectedUnitId(null);
         setSelectedSpell(null);
         setReachableTiles([]);
@@ -340,24 +411,86 @@ export const useGameEngine = () => {
         endUnitAction(unitId);
     };
 
+    // --- Enemy AI ---
+    const runEnemyTurn = async () => {
+        setIsBusy(true);
+        setActiveFaction(Faction.ENEMY);
+        setSystemMessage("Enemy Turn...");
+
+        // Initial Delay for Banner
+        await wait(2000);
+
+        // Get fresh reference to enemies
+        // Note: we must use unitsRef.current in loops to get latest component state if it updates, 
+        // but here we are in an async function.
+        // Simple AI: Iterate all enemies. If can attack, attack. Else, wait.
+        // No movement for now.
+
+        const enemies = unitsRef.current.filter(u => u.faction === Faction.ENEMY);
+
+        for (const enemy of enemies) {
+            // Refresh map/units state (though simplistic AI just reads ref)
+            const currentUnit = unitsRef.current.find(u => u.id === enemy.id);
+            if (!currentUnit || currentUnit.hp <= 0) continue;
+
+            // Check Attack Range FIRST
+            const targets = getValidAttackTargets(currentUnit, unitsRef.current, map[0].length, map.length);
+
+            // Skip inactive units
+            if (targets.length === 0) continue;
+
+            // Highlight & Focus (Only if acting)
+            setSelectedUnitId(currentUnit.id);
+            await wait(200);
+
+            // Pick random target
+            const targetPos = targets[Math.floor(Math.random() * targets.length)];
+            const targetUnit = unitsRef.current.find(u => u.position.x === targetPos.x && u.position.y === targetPos.y);
+
+            if (targetUnit) {
+                setSystemMessage(`${currentUnit.name} attacks ${targetUnit.name}!`);
+
+                // Attack!
+                await performAttackAnimation(currentUnit.id, targetPos, targetUnit.id);
+                const result = applyDamage(currentUnit.id, targetPos);
+
+                if (result.success && result.isKill && result.targetId) {
+                    await performDeathAnimation(result.targetId);
+                }
+            }
+
+            // Mark as moved (internal state update)
+            setUnits(prev => prev.map(u => u.id === enemy.id ? { ...u, hasMoved: true } : u));
+
+            await wait(500); // Wait after attack
+        }
+
+        // End Enemy Turn
+        setTurn(prev => prev + 1);
+        setActiveFaction(Faction.PLAYER);
+
+        // Reset Moves
+        setUnits(prev => prev.map(u => ({ ...u, hasMoved: false })));
+
+        setSystemMessage(`Turn ${turn + 1} started.`);
+        // Note: 'turn' in state is old closure, but settter logic runs on new. 
+        // However, the message will lag. Fix:
+        setSystemMessage((prev) => "Player Turn Started"); // temporary message
+
+        setHistory([]);
+        setSelectedUnitId(null);
+        setIsBusy(false);
+    };
+
     const endTurn = () => {
         if (currentLevel && currentLevel.maxTurns > 0 && turn >= currentLevel.maxTurns) {
             setGameStatus(GameStatus.DEFEAT);
             return;
         }
-        // Turn change is a major checkpoint; clear undo history
-        setHistory([]);
-        setPreMoveState(null);
 
-        const resetUnits = units.map(u => ({ ...u, hasMoved: false }));
-        setUnits(resetUnits);
-        setTurn(prev => prev + 1);
-        setSystemMessage(`Turn ${turn + 1} started.`);
-        setSelectedUnitId(null);
-        setInteractionMode('MOVEMENT');
-        setReachableTiles([]);
-        setActionTargets([]);
-        setAttackRange([]);
+        // Player Ends Turn -> Start Enemy Turn
+        deselect();
+        runEnemyTurn();
     };
 
     const undo = () => {
@@ -411,6 +544,7 @@ export const useGameEngine = () => {
             map,
             units,
             turn,
+            activeFaction, // Exposed
             interactionMode,
             selectedUnitId,
             selectedSpell,
@@ -431,7 +565,7 @@ export const useGameEngine = () => {
             waitUnit,
             endTurn,
             undo,
-            setIsBusy,
+            setIsBusy, // kept for now
             enterAttackMode: () => {
                 const u = units.find(unit => unit.id === selectedUnitId);
                 if (u) enterAttackMode(u, units);
@@ -440,16 +574,16 @@ export const useGameEngine = () => {
             enterSpellTargeting,
             castSpell,
             removeUnits: (unitIds: string[]) => {
-                const nextUnits = unitsRef.current.filter(u => !unitIds.includes(u.id));
-                setUnits(nextUnits);
-                checkWinLoss(nextUnits, turn);
+                // Deprecated external usage, but kept for safety
+                performDeathAnimation(unitIds[0]);
             }
         },
-        combatState: { // Exposed Stub for now to satisfy App.tsx
-            shakingUnitId: null,
-            dyingUnitIds: [],
-            attackerId: null,
-            attackOffset: { x: 0, y: 0 }
+        combatState: { // Real state now
+            shakingUnitId: visuals.shakingUnitId,
+            dyingUnitIds: visuals.dyingUnitIds,
+            attackerId: visuals.attackerId,
+            attackOffset: { x: 0, y: 0 },
+            attackTarget: visuals.attackTarget
         }
     };
 };
