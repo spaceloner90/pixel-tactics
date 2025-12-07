@@ -47,11 +47,15 @@ export const useGameEngine = () => {
         attackerId: string | null;
         attackTarget: Position | null;
         effectType?: string;
+        castingUnitId: string | null; // For cutscenes
+        cameraFocus: Position | null; // For snapping focus
     }>({
         shakingUnitId: null,
         dyingUnitIds: [],
         attackerId: null,
-        attackTarget: null
+        attackTarget: null,
+        castingUnitId: null,
+        cameraFocus: null
     });
 
     // --- Helpers ---
@@ -128,6 +132,29 @@ export const useGameEngine = () => {
         await wait(150); // Finish Shake
 
         setVisuals(prev => ({ ...prev, shakingUnitId: null }));
+    };
+
+    const performCastAnimation = async (casterId: string, targetPos: Position, spell: Spell) => {
+        const caster = unitsRef.current.find(u => u.id === casterId);
+
+        // 1. Cutscene (If portrait exists)
+        if (caster?.castingPortrait) {
+            setVisuals(prev => ({ ...prev, castingUnitId: casterId }));
+            await wait(750); // 0.75s Cutscene
+            setVisuals(prev => ({ ...prev, castingUnitId: null }));
+        }
+
+        // 2. Spell Effect & Camera Focus
+        if (spell.vfxType) {
+            // Focus Camera on Target
+            setVisuals(prev => ({ ...prev, cameraFocus: targetPos, effectType: spell.vfxType, attackTarget: targetPos }));
+
+            // Wait for effect (Fireball is ~600ms)
+            await wait(800);
+
+            // Clear
+            setVisuals(prev => ({ ...prev, cameraFocus: null, effectType: undefined, attackTarget: null }));
+        }
     };
 
     const performDeathAnimation = async (unitId: string) => {
@@ -364,8 +391,8 @@ export const useGameEngine = () => {
             setHistory(prev => [...prev, preMoveState]);
         }
 
-        // Animation (Reuse attack/lunge for cast)
-        await performAttackAnimation(attacker.id, targetPos, "NONE", "FIREBALL"); // No shake yet
+        // Animation (Decoupled Cast)
+        await performCastAnimation(attacker.id, targetPos, selectedSpell);
 
         // Calculate AOE
         const affectedTiles = getTilesInRadius(targetPos, selectedSpell.radius, map[0].length, map.length);
@@ -605,7 +632,9 @@ export const useGameEngine = () => {
             attackerId: visuals.attackerId,
             attackOffset: { x: 0, y: 0 },
             attackTarget: visuals.attackTarget,
-            effectType: visuals.effectType
+            effectType: visuals.effectType,
+            castingUnitId: visuals.castingUnitId, // Exposed
+            cameraFocus: visuals.cameraFocus // Exposed
         }
     };
 };

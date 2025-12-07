@@ -100,8 +100,9 @@ export const LEVELS: LevelConfig[] = [
                 attackRangeMin: 1,
                 attackRangeMax: 1,
                 hasMoved: false,
+                castingPortrait: 'wizard_casting.png',
                 spells: [
-                    { id: 'fireball', name: 'Fireball', range: 3, radius: 1, damage: 1 }
+                    { id: 'fireball', name: 'Fireball', range: 3, radius: 1, damage: 1, vfxType: 'FIREBALL' }
                 ]
             },
             // 9 Dummies in 3x3 block centered at 3,5
@@ -182,8 +183,9 @@ export const LEVELS: LevelConfig[] = [
                 attackRangeMin: 1,
                 attackRangeMax: 1,
                 hasMoved: false,
+                castingPortrait: 'wizard_casting.png',
                 spells: [
-                    { id: 'fireball', name: 'Fireball', range: 3, radius: 1, damage: 1 } // Standard Range
+                    { id: 'fireball', name: 'Fireball', range: 3, radius: 1, damage: 1, vfxType: 'FIREBALL' } // Standard Range
                 ]
             },
 

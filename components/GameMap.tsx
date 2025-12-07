@@ -12,7 +12,10 @@ interface CombatVisualState {
     dyingUnitIds: string[];
     attackerId: string | null;
     attackOffset: { x: number; y: number };
+    attackTarget: Position | null; // Added for effects
     effectType?: string;
+    castingUnitId?: string | null;
+    cameraFocus?: Position | null;
 }
 
 interface GameMapProps {
@@ -56,6 +59,9 @@ export const GameMap: React.FC<GameMapProps> = ({
     const camStartRef = useRef({ x: 0, y: 0 });
     const clickBlockerRef = useRef(false);
 
+    // Loading State
+    const [isLoading, setIsLoading] = useState(true);
+
     const width = map[0]?.length || 0;
     const height = map.length || 0;
 
@@ -87,7 +93,10 @@ export const GameMap: React.FC<GameMapProps> = ({
         const processImage = async (filename: string, ref: React.MutableRefObject<HTMLImageElement | null>) => {
             const img = new Image();
             img.src = `${import.meta.env.BASE_URL}${filename}`;
-            await new Promise((resolve) => { img.onload = resolve; });
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = resolve; // Continue even if fail
+            });
 
             // Create processing canvas
             const canvas = document.createElement('canvas');
@@ -124,25 +133,31 @@ export const GameMap: React.FC<GameMapProps> = ({
             // Create final image from canvas (No Cropping)
             const finalImg = new Image();
             finalImg.src = canvas.toDataURL();
-            finalImg.onload = () => {
-                ref.current = finalImg;
-            };
+            await new Promise((resolve) => { finalImg.onload = resolve; });
+            ref.current = finalImg;
         };
 
-        processImage('alaric.png', alaricSprite);
-        processImage('alaric_walk.png', alaricWalkSprite);
-        processImage('archer.png', archerSprite);
-        processImage('archer.png', archerSprite);
-        processImage('wizard.png', wizardSprite);
-        // Wizard Loading (Direct, Pre-processed)
-        const wc = new Image();
-        wc.src = `${import.meta.env.BASE_URL}wizard_casting.png`;
-        wc.onload = () => { wizardCastingSprite.current = wc; };
+        const loadDirect = async (filename: string, ref: React.MutableRefObject<HTMLImageElement | null>) => {
+            const img = new Image();
+            img.src = `${import.meta.env.BASE_URL}${filename}`;
+            await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
+            ref.current = img;
+        };
 
-        // Load Fireball (Direct load as it is pre-processed)
-        const fb = new Image();
-        fb.src = `${import.meta.env.BASE_URL}fireball.png`;
-        fb.onload = () => { fireballSprite.current = fb; };
+        const loadAll = async () => {
+            await Promise.all([
+                processImage('alaric.png', alaricSprite),
+                processImage('alaric_walk.png', alaricWalkSprite),
+                processImage('archer.png', archerSprite),
+                processImage('wizard.png', wizardSprite),
+                loadDirect('fireball.png', fireballSprite)
+                // wizard_casting.png (cutscene) loads on demand or we can preload it here too? 
+                // The user specifically complained about "unit icons (idle_1)", so the main sprites are critical.
+            ]);
+            setIsLoading(false);
+        };
+
+        loadAll();
     }, []);
 
     // State for Animations
@@ -158,8 +173,27 @@ export const GameMap: React.FC<GameMapProps> = ({
     // prevEffectType removed as we use lazy init
 
 
-    // Camera Snap for Active Enemy
+    // Camera Snap for Active Enemy & Spell Focus
     useEffect(() => {
+        // Priority 1: Combat Focus (Spells)
+        if (combatState.cameraFocus) {
+            const targetWorldX = combatState.cameraFocus.x * TILE_SIZE + TILE_SIZE / 2;
+            const targetWorldY = combatState.cameraFocus.y * TILE_SIZE + TILE_SIZE / 2;
+
+            const viewW = VIEWPORT_WIDTH * TILE_SIZE;
+            const viewH = VIEWPORT_HEIGHT * TILE_SIZE;
+
+            const camX = targetWorldX - (viewW / (2 * scale));
+            const camY = targetWorldY - (viewH / (2 * scale));
+
+            setCamera({
+                x: Math.round(Math.max(0, Math.min(camX, maxScrollX))),
+                y: Math.round(Math.max(0, Math.min(camY, maxScrollY)))
+            });
+            return;
+        }
+
+        // Priority 2: Selected Enemy
         if (!selectedUnitId) return;
         const unit = units.find(u => u.id === selectedUnitId);
 
@@ -180,7 +214,23 @@ export const GameMap: React.FC<GameMapProps> = ({
                 y: Math.round(Math.max(0, Math.min(camY, maxScrollY)))
             });
         }
-    }, [selectedUnitId, units, scale, maxScrollX, maxScrollY]);
+    }, [selectedUnitId, units, scale, maxScrollX, maxScrollY, combatState.cameraFocus]);
+
+    // Cutscene Asset Loading
+    // Cutscene Asset Loading
+    const cutsceneSprite = useRef<HTMLImageElement | null>(null);
+    useEffect(() => {
+        if (combatState.castingUnitId) {
+            const unit = units.find(u => u.id === combatState.castingUnitId);
+            if (unit && unit.castingPortrait) {
+                const img = new Image();
+                img.src = `${import.meta.env.BASE_URL}${unit.castingPortrait}`;
+                img.onload = () => { cutsceneSprite.current = img; };
+            }
+        } else {
+            cutsceneSprite.current = null;
+        }
+    }, [combatState.castingUnitId, units]);
 
     // RENDER LOOP
     useEffect(() => {
@@ -563,32 +613,28 @@ export const GameMap: React.FC<GameMapProps> = ({
                     sx, 0, 96, 96,
                     drawX, drawY, size, size
                 );
-
-                // Wizard Casting Overlay
-                if (wizardCastingSprite.current) {
-                    ctx.save();
-                    // Reset transform to draw in screen space
-                    ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-                    const pImg = wizardCastingSprite.current;
-                    // Scale to 60% of viewport height
-                    const targetHeight = canvas.height * 0.6;
-                    const pScale = targetHeight / pImg.height;
-
-                    const pW = pImg.width * pScale;
-                    const pH = pImg.height * pScale;
-
-                    // Bottom Right
-                    const pX = canvas.width - pW;
-                    const pY = canvas.height - pH;
-
-                    ctx.drawImage(pImg, pX, pY, pW, pH);
-
-                    ctx.restore();
-                }
             } else {
                 effectStartTime.current = 0; // Reset
             }
+
+            // 5. Cutscene Overlay (Separate Step)
+            if (combatState.castingUnitId && cutsceneSprite.current) {
+                ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0); // Screen Space
+
+                const pImg = cutsceneSprite.current;
+                const targetHeight = canvas.height * 0.6;
+                const pScale = targetHeight / pImg.height;
+
+                const pW = pImg.width * pScale;
+                const pH = pImg.height * pScale;
+                const pX = canvas.width - pW; // Right aligned
+                const pY = canvas.height - pH; // Bottom aligned
+
+                ctx.drawImage(pImg, pX, pY, pW, pH);
+                ctx.restore();
+            }
+
             ctx.restore();
 
             animationFrameId = requestAnimationFrame(render);
@@ -788,6 +834,11 @@ export const GameMap: React.FC<GameMapProps> = ({
             }}
             onContextMenu={handleContextMenu}
         >
+            {isLoading && (
+                <div className="absolute inset-0 bg-stone-900 flex items-center justify-center z-50 text-white font-mono text-2xl">
+                    Loading Assets...
+                </div>
+            )}
             <canvas
                 ref={canvasRef}
                 width={viewportWidthPx}

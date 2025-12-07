@@ -21,6 +21,7 @@ export interface Spell {
   range: number;
   radius: number;
   damage: number;
+  vfxType?: string;
 }
 
 export interface Unit {
@@ -37,6 +38,7 @@ export interface Unit {
   hasMoved: boolean;
   name: string;
   portrait?: string;
+  castingPortrait?: string;
 }
 
 export enum TerrainType {
