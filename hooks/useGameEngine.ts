@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Unit, Position, TileData, Faction, GameStatus, LevelConfig, UnitType, TerrainType, Spell } from '../types';
+import { Unit, Position, TileData, Faction, GameStatus, LevelConfig, UnitType, TerrainType, Spell, VictoryCondition } from '../types';
 import { generateMap, getReachableTiles, getValidAttackTargets, getAdjacentTiles, getTilesInRange, getTilesInRadius, DEFAULT_WIDTH, DEFAULT_HEIGHT } from '../services/gameLogic';
 
 interface HistorySnapshot {
@@ -109,10 +109,8 @@ export const useGameEngine = () => {
         } else if (players.length === 0) {
             setGameStatus(GameStatus.DEFEAT);
             setSystemMessage("All units lost.");
-        } else if (currentLevel?.maxTurns && currentTurn > currentLevel.maxTurns) {
-            setGameStatus(GameStatus.DEFEAT);
-            setSystemMessage("Turn limit reached.");
         }
+        // Removed Turn Limit Check here - moved to end of Enemy Turn
     };
 
     // --- Animation Actions ---
@@ -305,7 +303,12 @@ export const useGameEngine = () => {
         // Save State BEFORE moving (for Cancel Move)
         setPreMoveState(createSnapshot());
 
-        const updatedUnits = units.map(u => u.id === unit.id ? { ...u, position: target } : u);
+        // Calculate Facing
+        let newFacing = unit.facing || 'RIGHT'; // Default
+        if (target.x < unit.position.x) newFacing = 'LEFT';
+        if (target.x > unit.position.x) newFacing = 'RIGHT';
+
+        const updatedUnits = units.map(u => u.id === unit.id ? { ...u, position: target, facing: newFacing } : u);
         setUnits(updatedUnits);
         setReachableTiles([]);
 
@@ -368,6 +371,8 @@ export const useGameEngine = () => {
 
         if (result.success && result.isKill && result.targetId) {
             await performDeathAnimation(result.targetId);
+            // Remove the dead unit from the list
+            setUnits(prev => prev.filter(u => u.id !== result.targetId));
         }
 
         if (preMoveState) {
@@ -464,72 +469,104 @@ export const useGameEngine = () => {
         await wait(2000);
 
         // Get fresh reference to enemies
-        // Note: we must use unitsRef.current in loops to get latest component state if it updates, 
-        // but here we are in an async function.
-        // Simple AI: Iterate all enemies. If can attack, attack. Else, wait.
-        // No movement for now.
-
         const enemies = unitsRef.current.filter(u => u.faction === Faction.ENEMY);
 
+        // Dynamic import to avoid circular dependency issues if any, or just standard usage
+        const { calculateEnemyAction } = await import('../services/aiLogic');
+
         for (const enemy of enemies) {
-            // Refresh map/units state (though simplistic AI just reads ref)
+            // Refresh map/units state
             const currentUnit = unitsRef.current.find(u => u.id === enemy.id);
             if (!currentUnit || currentUnit.hp <= 0) continue;
 
-            // Check Attack Range FIRST
-            const targets = getValidAttackTargets(currentUnit, unitsRef.current, map[0].length, map.length);
+            // Calculate AI Action
+            const decision = calculateEnemyAction(currentUnit, unitsRef.current, map);
 
-            // Skip inactive units
-            if (targets.length === 0) continue;
-
-            // Highlight & Focus (Only if acting)
+            // Highlight Actor
             setSelectedUnitId(currentUnit.id);
-            await wait(200);
+            await wait(300);
 
-            // Pick random target
-            const targetPos = targets[Math.floor(Math.random() * targets.length)];
-            const targetUnit = unitsRef.current.find(u => u.position.x === targetPos.x && u.position.y === targetPos.y);
+            // Execute Move
+            if (decision.movePos) {
+                // Check if it's actually a move (different position)
+                if (currentUnit.position.x !== decision.movePos.x || currentUnit.position.y !== decision.movePos.y) {
+                    let newFacing = currentUnit.facing || 'RIGHT';
+                    if (decision.movePos.x < currentUnit.position.x) newFacing = 'LEFT';
+                    if (decision.movePos.x > currentUnit.position.x) newFacing = 'RIGHT';
 
-            if (targetUnit) {
-                setSystemMessage(`${currentUnit.name} attacks ${targetUnit.name}!`);
-
-                // Attack!
-                await performAttackAnimation(currentUnit.id, targetPos, targetUnit.id);
-                const result = applyDamage(currentUnit.id, targetPos);
-
-                if (result.success && result.isKill && result.targetId) {
-                    await performDeathAnimation(result.targetId);
+                    setUnits(prev => prev.map(u => u.id === currentUnit.id ? { ...u, position: decision.movePos!, facing: newFacing } : u));
+                    await wait(300); // Move Visual Delay
                 }
+            }
+
+            // Execute Attack
+            if (decision.action === 'ATTACK' && decision.targetId) {
+                const targetUnit = unitsRef.current.find(u => u.id === decision.targetId);
+
+                if (targetUnit) {
+                    setSystemMessage(`${currentUnit.name} attacks ${targetUnit.name}!`);
+
+                    // Attack Animation
+                    // We need target Position. If unit moved, it's there.
+                    await performAttackAnimation(currentUnit.id, targetUnit.position, targetUnit.id);
+                    const result = applyDamage(currentUnit.id, targetUnit.position);
+
+                    if (result.success && result.isKill && result.targetId) {
+                        await performDeathAnimation(result.targetId);
+                    }
+                }
+            } else {
+                setSystemMessage(`${currentUnit.name} advances.`);
             }
 
             // Mark as moved (internal state update)
             setUnits(prev => prev.map(u => u.id === enemy.id ? { ...u, hasMoved: true } : u));
 
-            await wait(500); // Wait after attack
+            await wait(300); // Wait after action
         }
 
         // End Enemy Turn
-        setTurn(prev => prev + 1);
+        const nextTurn = turn + 1;
+        setTurn(nextTurn);
         setActiveFaction(Faction.PLAYER);
 
         // Reset Moves
         setUnits(prev => prev.map(u => ({ ...u, hasMoved: false })));
 
-        setSystemMessage(`Turn ${turn + 1} started.`);
-        // Note: 'turn' in state is old closure, but settter logic runs on new. 
-        // However, the message will lag. Fix:
-        setSystemMessage((prev) => "Player Turn Started"); // temporary message
-
+        setSystemMessage((prev) => "Player Turn Started");
         setHistory([]);
         setSelectedUnitId(null);
         setIsBusy(false);
+
+        // Turn Timer Check (After Enemy Phase)
+        // Need to check currentLevel ref or state. Closure captures `currentLevel`.
+        if (currentLevel?.maxTurns && nextTurn > currentLevel.maxTurns) {
+            if (currentLevel.victoryCondition === VictoryCondition.SURVIVE) {
+                setGameStatus(GameStatus.VICTORY);
+                setSystemMessage("Surived! Victory!");
+
+                // Persist Completion Logic (Copy-Paste from checkWinLoss)
+                if (currentLevel?.id) {
+                    try {
+                        const saved = localStorage.getItem('pixelTactics_completed');
+                        const completed = saved ? JSON.parse(saved) : [];
+                        if (!completed.includes(currentLevel.id)) {
+                            completed.push(currentLevel.id);
+                            localStorage.setItem('pixelTactics_completed', JSON.stringify(completed));
+                        }
+                    } catch (e) {
+                        console.error("Save failed", e);
+                    }
+                }
+            } else {
+                setGameStatus(GameStatus.DEFEAT);
+                setSystemMessage("Turn limit reached.");
+            }
+        }
     };
 
     const endTurn = () => {
-        if (currentLevel && currentLevel.maxTurns > 0 && turn >= currentLevel.maxTurns) {
-            setGameStatus(GameStatus.DEFEAT);
-            return;
-        }
+        // Removed explicit turn limit check here as requested
 
         // Player Ends Turn -> Start Enemy Turn
         deselect();

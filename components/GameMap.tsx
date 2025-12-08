@@ -44,6 +44,7 @@ export const GameMap: React.FC<GameMapProps> = ({
     onHover,
     onRightClick,
     combatState,
+
     interactionMode,
     selectedSpell
 }) => {
@@ -84,6 +85,7 @@ export const GameMap: React.FC<GameMapProps> = ({
     const alaricSprite = useRef<HTMLImageElement | null>(null);
     const alaricWalkSprite = useRef<HTMLImageElement | null>(null);
     const archerSprite = useRef<HTMLImageElement | null>(null);
+    const enemyGuardSprite = useRef<HTMLImageElement | null>(null);
     const wizardSprite = useRef<HTMLImageElement | null>(null);
     const wizardCastingSprite = useRef<HTMLImageElement | null>(null);
     const fireballSprite = useRef<HTMLImageElement | null>(null);
@@ -149,6 +151,7 @@ export const GameMap: React.FC<GameMapProps> = ({
                 processImage('alaric.png', alaricSprite),
                 processImage('alaric_walk.png', alaricWalkSprite),
                 processImage('archer.png', archerSprite),
+                loadDirect('enemy_guard.png', enemyGuardSprite),
                 processImage('wizard.png', wizardSprite),
                 loadDirect('fireball.png', fireballSprite)
                 // wizard_casting.png (cutscene) loads on demand or we can preload it here too? 
@@ -458,6 +461,8 @@ export const GameMap: React.FC<GameMapProps> = ({
                     spriteToUse = archerSprite.current;
                 } else if (isWizard && wizardSprite.current) {
                     spriteToUse = wizardSprite.current;
+                } else if (unit.name === 'Guard' && enemyGuardSprite.current) {
+                    spriteToUse = enemyGuardSprite.current;
                 }
 
                 if (spriteToUse) {
@@ -508,11 +513,21 @@ export const GameMap: React.FC<GameMapProps> = ({
                     // Align to bottom of available space (just above bar)
                     const dstY = Math.floor(drawY_Inner + availableHeight - dstH);
 
+                    ctx.save();
+                    if (unit.facing === 'LEFT') {
+                        // Flip horizontally around the center of the unit's box
+                        ctx.translate(dstX + dstW / 2, dstY);
+                        ctx.scale(-1, 1);
+                        ctx.translate(-(dstX + dstW / 2), -dstY);
+                    }
+
                     ctx.drawImage(
                         img,
                         sx, sy, sw, sh,
                         dstX, dstY, dstW, dstH
                     );
+
+                    ctx.restore();
 
                     ctx.filter = 'none';
 
@@ -781,7 +796,7 @@ export const GameMap: React.FC<GameMapProps> = ({
         }
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (e: React.MouseEvent | MouseEvent) => {
         if (isDraggingRef.current) {
             clickBlockerRef.current = true;
             setTimeout(() => clickBlockerRef.current = false, 50);
@@ -793,6 +808,7 @@ export const GameMap: React.FC<GameMapProps> = ({
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (e.button !== 0) return; // Left click only for nav
+
         isMouseDownRef.current = true;
         dragStartRef.current = { x: e.clientX, y: e.clientY };
         camStartRef.current = { x: camera.x, y: camera.y };
@@ -815,7 +831,7 @@ export const GameMap: React.FC<GameMapProps> = ({
     // Global event listeners for drag up/zoom outside canvas
     useEffect(() => {
         const globalMove = (e: MouseEvent) => handleMouseMove(e);
-        const globalUp = () => handleMouseUp();
+        const globalUp = (e: MouseEvent) => handleMouseUp(e);
 
         window.addEventListener('mousemove', globalMove);
         window.addEventListener('mouseup', globalUp);
@@ -823,7 +839,7 @@ export const GameMap: React.FC<GameMapProps> = ({
             window.removeEventListener('mousemove', globalMove);
             window.removeEventListener('mouseup', globalUp);
         };
-    }, [camera]);
+    }, [camera, units, map, hoverMoveTiles, hoverAttackTiles, interactionMode]);
 
     return (
         <div

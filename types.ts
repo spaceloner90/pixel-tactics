@@ -7,7 +7,9 @@ export enum UnitType {
   KNIGHT = 'KNIGHT',
   ARCHER = 'ARCHER',
   MAGE = 'MAGE',
-  WIZARD = 'WIZARD'
+
+  WIZARD = 'WIZARD',
+  DUMMY = 'DUMMY'
 }
 
 export enum Faction {
@@ -39,6 +41,7 @@ export interface Unit {
   name: string;
   portrait?: string;
   castingPortrait?: string;
+  facing?: 'LEFT' | 'RIGHT';
 }
 
 export enum TerrainType {
@@ -60,6 +63,11 @@ export enum GameStatus {
   EDITOR = 'EDITOR'
 }
 
+export enum VictoryCondition {
+  ELIMINATE_ALL = 'ELIMINATE_ALL',
+  SURVIVE = 'SURVIVE'
+}
+
 export interface LevelConfig {
   id: number;
   name: string;
@@ -69,6 +77,7 @@ export interface LevelConfig {
   maxTurns: number; // 0 for infinite
   units: Unit[]; // Starting units
   walls?: Position[]; // Optional wall placements
+  victoryCondition?: VictoryCondition;
 }
 
 export interface GameState {

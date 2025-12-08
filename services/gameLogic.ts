@@ -10,6 +10,10 @@ export const TERRAIN_COST: Record<TerrainType, number> = {
   [TerrainType.CLOSED]: 999, // Impassable
 };
 
+export const getDistance = (a: Position, b: Position): number => {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+};
+
 export const generateMap = (width: number, height: number): TileData[][] => {
   const map: TileData[][] = [];
   for (let y = 0; y < height; y++) {
@@ -85,17 +89,31 @@ export const getReachableTiles = (
       const tile = map[n.y][n.x];
       const moveCost = TERRAIN_COST[tile.terrain];
 
-      // Obstacle check: Other units (cannot move THROUGH enemies or allies for now)
-      const isOccupied = units.some(u => u.position.x === n.x && u.position.y === n.y && u.id !== unit.id);
+      // Blocked by terrain
+      if (moveCost > range) continue;
 
-      if (moveCost > range) continue; // Impassable terrain logic
-      if (isOccupied) continue; // Blocked by unit
+      // Obstacle check: Units
+      const occupyingUnit = units.find(u => u.position.x === n.x && u.position.y === n.y && u.id !== unit.id && u.hp > 0);
+
+      if (occupyingUnit) {
+        // Cannot move through enemies
+        if (occupyingUnit.faction !== unit.faction) continue;
+
+        // Allies: Can move through, but cost applies. 
+        // Note: We continue to processed queue, but decide on 'reachable' below.
+      }
 
       const newCost = current.cost + moveCost;
 
       if (newCost <= range) {
         visited.add(key);
-        reachable.push(n);
+
+        // Valid move destination ONLY if not occupied
+        if (!occupyingUnit) {
+          reachable.push(n);
+        }
+
+        // Process neighbors from here (pathing through)
         queue.push({ x: n.x, y: n.y, cost: newCost });
       }
     }

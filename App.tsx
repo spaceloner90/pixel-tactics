@@ -43,8 +43,13 @@ const App: React.FC = () => {
 
       // Select Friendly Unit
       if (unitAtTile && unitAtTile.faction === Faction.PLAYER) {
-        actions.selectUnit(unitAtTile.id);
-        return;
+        // If clicking SAME unit that is already selected, treat as move (commit 0 movement)
+        if (unitAtTile.id === state.selectedUnitId) {
+          // Fallthrough to move logic below
+        } else {
+          actions.selectUnit(unitAtTile.id);
+          return;
+        }
       }
 
       // Move Selected Unit

@@ -14,16 +14,54 @@ def stitch_sprites(output_path, frame_paths):
         
         img = Image.open(path).convert("RGBA")
         
-        # Flood Fill Transparency
-        # Flood from corners removing white background
+        # Custom BFS Floodfill to avoid PIL implementation ambiguity
+        # Strictly compares against (255, 255, 255)
+        pixels = img.load()
         w, h = img.size
-        corners = [(0, 0), (w-1, 0), (0, h-1), (w-1, h-1)]
+        visited = set()
+        queue = [(0, 0), (w-1, 0), (0, h-1), (w-1, h-1)]
+        tolerance = 65
         
-        try:
-             for corner in corners:
-                ImageDraw.floodfill(img, corner, (0, 0, 0, 0), thresh=50)
-        except Exception as e:
-            print(f"Floodfill error: {e}")
+        target_r, target_g, target_b = 255, 255, 255
+
+        # Initialize queue with valid corners (only if they are within tolerance of white)
+        # Note: We assume corners are background.
+        
+        while queue:
+            x, y = queue.pop(0)
+            
+            if (x, y) in visited:
+                continue
+            
+            # Bounds check
+            if x < 0 or x >= w or y < 0 or y >= h:
+                continue
+
+            visited.add((x, y))
+
+            # Get Color
+            r, g, b, a = pixels[x, y]
+
+            # Check if transparent already (if we revisit or overlap)
+            if a == 0:
+                pass # Already processed, but neighbors might need check? 
+                     # If it was already 0, it might cut off path.
+                     # But we are setting to 0.
+            
+            # Check Tolerance vs PURE WHITE
+            r_diff = abs(r - target_r)
+            g_diff = abs(g - target_g)
+            b_diff = abs(b - target_b)
+
+            if r_diff < tolerance and g_diff < tolerance and b_diff < tolerance:
+                # Match! Make transparent
+                pixels[x, y] = (0, 0, 0, 0)
+
+                # Add neighbors
+                queue.append((x+1, y))
+                queue.append((x-1, y))
+                queue.append((x, y+1))
+                queue.append((x, y-1))
 
         frames.append(img)
 
