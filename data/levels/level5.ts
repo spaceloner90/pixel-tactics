@@ -18,13 +18,13 @@ export const level5: LevelConfig = {
     units: [
         {
             id: "KNIGHT_ENEMY_1765227005471_21lq8",
-            name: "Guard",
+            name: "Captain",
             portrait: "/pixel-tactics/assets/portraits/enemy_soldier.png",
             type: UnitType.KNIGHT,
             faction: Faction.ENEMY,
             position: { x: 4, y: 1 },
-            hp: 1,
-            maxHp: 1,
+            hp: 3,
+            maxHp: 3,
             moveRange: 4,
             attackRangeMin: 1,
             attackRangeMax: 1,

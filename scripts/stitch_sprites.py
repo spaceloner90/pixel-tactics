@@ -27,6 +27,7 @@ def stitch_sprites(output_path, frame_paths):
         # Initialize queue with valid corners (only if they are within tolerance of white)
         # Note: We assume corners are background.
         
+        # 1. Edge-based Background Removal (BFS from corners)
         while queue:
             x, y = queue.pop(0)
             
@@ -41,13 +42,10 @@ def stitch_sprites(output_path, frame_paths):
 
             # Get Color
             r, g, b, a = pixels[x, y]
-
-            # Check if transparent already (if we revisit or overlap)
-            if a == 0:
-                pass # Already processed, but neighbors might need check? 
-                     # If it was already 0, it might cut off path.
-                     # But we are setting to 0.
             
+            if a == 0:
+                continue # Already transparent
+
             # Check Tolerance vs PURE WHITE
             r_diff = abs(r - target_r)
             g_diff = abs(g - target_g)
@@ -62,6 +60,72 @@ def stitch_sprites(output_path, frame_paths):
                 queue.append((x-1, y))
                 queue.append((x, y+1))
                 queue.append((x, y-1))
+
+        # 2. Internal Blob Removal (Holes in bowstrings etc)
+        # Scan entire image for unvisited white blobs
+        for y in range(h):
+            for x in range(w):
+                if (x, y) in visited:
+                    continue
+                
+                r, g, b, a = pixels[x, y]
+                if a == 0: 
+                    visited.add((x, y))
+                    continue
+
+                # Check if it is white
+                r_diff = abs(r - target_r)
+                g_diff = abs(g - target_g)
+                b_diff = abs(b - target_b)
+                
+                if r_diff < tolerance and g_diff < tolerance and b_diff < tolerance:
+                    # Found a potential internal white blob
+                    # BFS to find extent
+                    blob_queue = [(x, y)]
+                    blob_pixels = []
+                    blob_visited = set() # Local visited for this blob extraction
+                    
+                    # We need to use a separate queue so we don't mix with main loop?
+                    # Actually we can just process it immediately.
+                    
+                    while blob_queue:
+                        bx, by = blob_queue.pop(0)
+                        
+                        if (bx, by) in blob_visited:
+                            continue
+                        
+                        if bx < 0 or bx >= w or by < 0 or by >= h:
+                            continue
+
+                        blob_visited.add((bx, by))
+                        visited.add((bx, by)) # Mark as visited globally so outer loop skips
+                        
+                        br, bg, bb, ba = pixels[bx, by]
+                        
+                        if ba == 0: continue
+
+                        bd_r = abs(br - target_r)
+                        bd_g = abs(bg - target_g)
+                        bd_b = abs(bb - target_b)
+
+                        if bd_r < tolerance and bd_g < tolerance and bd_b < tolerance:
+                            blob_pixels.append((bx, by))
+                            
+                            blob_queue.append((bx+1, by))
+                            blob_queue.append((bx-1, by))
+                            blob_queue.append((bx, by+1))
+                            blob_queue.append((bx, by-1))
+                    
+                    # Decide to remove
+                    # User requested 0.2% of total image dimension
+                    threshold = (w * h) * 0.002
+                    
+                    if len(blob_pixels) > threshold:
+                        print(f"Removing internal blob of size {len(blob_pixels)} at {x},{y} (Threshold: {threshold:.1f})")
+                        for px, py in blob_pixels:
+                            pixels[px, py] = (0, 0, 0, 0)
+                    else:
+                         print(f"Keeping internal blob of size {len(blob_pixels)} at {x},{y} (Threshold: {threshold:.1f})")
 
         frames.append(img)
 

@@ -86,8 +86,11 @@ export const GameMap: React.FC<GameMapProps> = ({
     const alaricWalkSprite = useRef<HTMLImageElement | null>(null);
     const archerSprite = useRef<HTMLImageElement | null>(null);
     const enemyGuardSprite = useRef<HTMLImageElement | null>(null);
+    const enemyArcherSprite = useRef<HTMLImageElement | null>(null);
+    const enemyCaptainSprite = useRef<HTMLImageElement | null>(null);
     const wizardSprite = useRef<HTMLImageElement | null>(null);
     const wizardCastingSprite = useRef<HTMLImageElement | null>(null);
+    const dummySprite = useRef<HTMLImageElement | null>(null);
     const fireballSprite = useRef<HTMLImageElement | null>(null);
 
     // Load Sprites with Processing
@@ -151,8 +154,11 @@ export const GameMap: React.FC<GameMapProps> = ({
                 processImage('alaric.png', alaricSprite),
                 processImage('alaric_walk.png', alaricWalkSprite),
                 processImage('archer.png', archerSprite),
-                loadDirect('enemy_guard.png', enemyGuardSprite),
                 processImage('wizard.png', wizardSprite),
+                loadDirect('enemy_guard.png', enemyGuardSprite),
+                loadDirect('enemy_archer.png', enemyArcherSprite),
+                loadDirect('enemy_captain.png', enemyCaptainSprite),
+                loadDirect('dummy.png', dummySprite),
                 loadDirect('fireball.png', fireballSprite)
                 // wizard_casting.png (cutscene) loads on demand or we can preload it here too? 
                 // The user specifically complained about "unit icons (idle_1)", so the main sprites are critical.
@@ -461,8 +467,14 @@ export const GameMap: React.FC<GameMapProps> = ({
                     spriteToUse = archerSprite.current;
                 } else if (isWizard && wizardSprite.current) {
                     spriteToUse = wizardSprite.current;
+                } else if (unit.type === UnitType.ARCHER && unit.faction === Faction.ENEMY && enemyArcherSprite.current) {
+                    spriteToUse = enemyArcherSprite.current;
+                } else if (unit.name === 'Captain' && enemyCaptainSprite.current) {
+                    spriteToUse = enemyCaptainSprite.current;
                 } else if (unit.name === 'Guard' && enemyGuardSprite.current) {
                     spriteToUse = enemyGuardSprite.current;
+                } else if (unit.type === UnitType.DUMMY && dummySprite.current) {
+                    spriteToUse = dummySprite.current;
                 }
 
                 if (spriteToUse) {
@@ -712,6 +724,77 @@ export const GameMap: React.FC<GameMapProps> = ({
         });
     };
 
+    // Refactored Hover Logic
+    const updateHoverState = (pos: Position | null) => {
+        if (!pos) {
+            if (lastHoverPos.current) {
+                lastHoverPos.current = null;
+                if (onHover) onHover(null);
+                setHoverMoveTiles([]);
+                setHoverAttackTiles([]);
+            }
+            return;
+        }
+
+        // Boundary Check for safety
+        if (pos.x < 0 || pos.x >= width || pos.y < 0 || pos.y >= height) {
+            if (lastHoverPos.current) {
+                lastHoverPos.current = null;
+                if (onHover) onHover(null);
+                setHoverMoveTiles([]);
+                setHoverAttackTiles([]);
+            }
+            return;
+        }
+
+        // Logic
+        lastHoverPos.current = pos;
+        if (onHover) onHover(pos);
+
+        // Hover Prediction Check
+        const hoveredUnit = units.find(u => u.position.x === pos.x && u.position.y === pos.y);
+
+        // Disable hover for selected unit
+        if (hoveredUnit && hoveredUnit.id !== selectedUnitId) {
+            // 1. Calculate Move Tiles (Blue)
+            const moves = getReachableTiles(hoveredUnit, units, map);
+            setHoverMoveTiles(moves);
+
+            // 2. Calculate Potential Attacks (Red) from ALL move tiles
+            const attackSet = new Set<string>();
+            moves.forEach(m => {
+                const rangeTiles = getTilesInRange(m, hoveredUnit.attackRangeMin, hoveredUnit.attackRangeMax, width, height);
+                rangeTiles.forEach(rt => {
+                    const key = `${rt.x},${rt.y}`;
+                    attackSet.add(key);
+                });
+            });
+
+            // Convert Set to Array and Filter out Moves
+            const attacks: Position[] = [];
+            attackSet.forEach(key => {
+                const [ax, ay] = key.split(',').map(Number);
+                // Check if in moves
+                const isMove = moves.some(m => m.x === ax && m.y === ay);
+                if (!isMove) {
+                    attacks.push({ x: ax, y: ay });
+                }
+            });
+
+            setHoverAttackTiles(attacks);
+        } else {
+            setHoverMoveTiles([]);
+            setHoverAttackTiles([]);
+        }
+    };
+
+    // Reactive Hover Update (Fix for 0-tile move or state changes)
+    useEffect(() => {
+        if (lastHoverPos.current) {
+            updateHoverState(lastHoverPos.current);
+        }
+    }, [units, selectedUnitId, interactionMode]); // Re-evaluate when these change
+
     const handleMouseMove = (e: React.MouseEvent | MouseEvent) => {
         // Drag Logic
         if (isMouseDownRef.current) {
@@ -743,57 +826,7 @@ export const GameMap: React.FC<GameMapProps> = ({
         // Hover Logic
         // We use the same event for hover calc, but relative to canvas
         const pos = getTileFromEvent(e.clientX, e.clientY);
-        if (pos) {
-            // Boundary Check
-            if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
-                if (!lastHoverPos.current || pos.x !== lastHoverPos.current.x || pos.y !== lastHoverPos.current.y) {
-                    lastHoverPos.current = pos;
-                    if (onHover) onHover(pos);
-
-                    // Hover Prediction Check
-                    const hoveredUnit = units.find(u => u.position.x === pos.x && u.position.y === pos.y);
-                    if (hoveredUnit) {
-                        // 1. Calculate Move Tiles (Blue)
-                        const moves = getReachableTiles(hoveredUnit, units, map);
-                        setHoverMoveTiles(moves);
-
-                        // 2. Calculate Potential Attacks (Red) from ALL move tiles
-                        const attackSet = new Set<string>();
-                        moves.forEach(m => {
-                            const rangeTiles = getTilesInRange(m, hoveredUnit.attackRangeMin, hoveredUnit.attackRangeMax, width, height);
-                            rangeTiles.forEach(rt => {
-                                const key = `${rt.x},${rt.y}`;
-                                attackSet.add(key);
-                            });
-                        });
-
-                        // Convert Set to Array and Filter out Moves
-                        const attacks: Position[] = [];
-                        attackSet.forEach(key => {
-                            const [ax, ay] = key.split(',').map(Number);
-                            // Check if in moves
-                            const isMove = moves.some(m => m.x === ax && m.y === ay);
-                            if (!isMove) {
-                                attacks.push({ x: ax, y: ay });
-                            }
-                        });
-
-                        setHoverAttackTiles(attacks);
-
-                    } else {
-                        setHoverMoveTiles([]);
-                        setHoverAttackTiles([]);
-                    }
-                }
-            } else {
-                if (lastHoverPos.current) {
-                    lastHoverPos.current = null;
-                    if (onHover) onHover(null);
-                    setHoverMoveTiles([]);
-                    setHoverAttackTiles([]);
-                }
-            }
-        }
+        updateHoverState(pos);
     };
 
     const handleMouseUp = (e: React.MouseEvent | MouseEvent) => {

@@ -25,9 +25,9 @@ export const level2: LevelConfig = {
         },
         {
             id: 'target_1',
-            name: 'Target',
-            portrait: '/pixel-tactics/assets/portraits/enemy_soldier.png',
-            type: UnitType.KNIGHT,
+            name: 'Dummy',
+            portrait: '/pixel-tactics/assets/portraits/dummy.png',
+            type: UnitType.DUMMY,
             faction: Faction.ENEMY,
             position: { x: 5, y: 0 },
             hp: 1,

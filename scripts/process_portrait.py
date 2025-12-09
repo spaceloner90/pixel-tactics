@@ -52,12 +52,12 @@ def process_portrait(input_path, output_path):
                 # Analyze Blob
                 blob_size = len(blob_pixels)
                 
-                # Heuristic: Remove if touching edge OR very large (> 5% of pixels)
-                # USER OVERRIDE: Remove specific artifact of size 162 at (471, 533)
-                large_threshold = (width * height) * 0.05
+                # Heuristic: Remove if touching edge OR very large (> 0.2% of pixels)
+                # Matches logic in stitch_sprites.py
+                threshold = (width * height) * 0.002
                 
-                if is_touching_edge or blob_size > large_threshold or blob_size == 162:
-                    print(f"Removing blob at ({x}, {y}): Size {blob_size}, Touching Edge: {is_touching_edge}")
+                if is_touching_edge or blob_size > threshold:
+                    print(f"Removing blob at ({x}, {y}): Size {blob_size}, Threshold {threshold:.1f}, Touching Edge: {is_touching_edge}")
                     for px, py in blob_pixels:
                         pixels[px, py] = (0, 0, 0, 0) # Transparent
                 else:
